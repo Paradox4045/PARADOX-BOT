@@ -2,7 +2,6 @@
 import os
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 
 from telegram import Update, ChatPermissions
 from telegram.ext import (
@@ -18,8 +17,6 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 WARN_LIMIT = 4
-MUTE_HOURS = 24
-
 warnings = {}
 
 BAD_WORDS = [
@@ -44,6 +41,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔥 أهلاً بك في PARADOX 404\n"
         "أنا بوت إدارة المجموعات الذكي."
     )
+
+
+async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    chat = update.effective_chat
+    owner = update.effective_user
+
+    if not message or not owner or not chat:
+        return
+
+    member = await chat.get_member(owner.id)
+
+    if member.status != "creator":
+        await message.reply_text(
+            "⛔ هذا الأمر مخصص لمالك المجموعة فقط."
+        )
+        return
+
+    if not message.reply_to_message:
+        await message.reply_text(
+            "⚠️ رد على رسالة العضو المكتوم واكتب /unmute"
+        )
+        return
+
+    target = message.reply_to_message.from_user
+
+    if not target:
+        return
+
+    try:
+        await context.bot.restrict_chat_member(
+            chat_id=chat.id,
+            user_id=target.id,
+            permissions=ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True
+            )
+        )
+
+        warnings[(chat.id, target.id)] = 0
+
+        await message.reply_text(
+            f"🔓 تم فك الكتم عن {target.first_name} "
+            "بواسطة مالك المجموعة."
+        )
+
+    except Exception:
+        logging.exception("Could not unmute member")
+        await message.reply_text(
+            "⚠️ تعذر فك الكتم. تحقق من صلاحيات البوت."
+        )
 
 
 async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,7 +136,6 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     key = (chat.id, user.id)
     warnings[key] = warnings.get(key, 0) + 1
-
     count = warnings[key]
 
     if count >= WARN_LIMIT:
@@ -99,18 +154,15 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     can_send_polls=False,
                     can_send_other_messages=False,
                     can_add_web_page_previews=False
-                ),
-                until_date=datetime.now(timezone.utc)
-                + timedelta(hours=MUTE_HOURS)
+                )
             )
 
             await context.bot.send_message(
                 chat.id,
-                f"🔇 تم كتم {user.first_name} لمدة 24 ساعة "
-                "بعد وصوله إلى 4 إنذارات."
+                f"🔇 تم كتم {user.first_name} نهائياً "
+                "بعد وصوله إلى 4 إنذارات.\n"
+                "🔐 فك الكتم متاح لمالك المجموعة فقط."
             )
-
-            warnings[key] = 0
 
         except Exception:
             logging.exception("Could not mute member")
@@ -135,6 +187,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("unmute", unmute))
 
     app.add_handler(
         MessageHandler(
