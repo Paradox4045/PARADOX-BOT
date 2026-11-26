@@ -1,7 +1,7 @@
 
 import os
-import re
 import logging
+import re
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -15,32 +15,19 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# قائمة الألفاظ المسيئة - قابلة للتعديل
-BAD_WORDS = {
-    "يا حمار",
-    "كلب",
-    "غبي",
-}
+WARN_LIMIT = 4
+warnings = {}
 
-# الروابط المسموحة
-ALLOWED_DOMAINS = set()
+BAD_WORDS = [
+    "كلب", "حمار", "غبي", "حقير", "تافه"
+]
 
-# عدد التحذيرات لكل عضو داخل كل مجموعة
-WARNINGS = {}
-
-URL_PATTERN = re.compile(
-    r"(https?://|www\.|t\.me/)",
-    re.IGNORECASE
-)
-
-
-async def is_admin(update, context):
-    member = await context.bot.get_chat_member(
-        update.effective_chat.id,
-        update.effective_user.id
-    )
-    return member.status in ("administrator", "creator")
-
+def contains_link(text):
+    return bool(re.search(
+        r"(https?://|www\.|t\.me/|telegram\.me/)",
+        text,
+        re.IGNORECASE
+    ))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -48,82 +35,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "أنا بوت إدارة المجموعات الذكي."
     )
 
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔥 أوامر PARADOX 404\n\n"
-        "/start - تشغيل البوت\n"
-        "/help - المساعدة\n"
-        "/id - معرف المجموعة\n"
-        "/warns - عدد تحذيراتك"
-    )
-
-
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"معرف المجموعة: {update.effective_chat.id}"
-    )
-
-
-async def show_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    key = (update.effective_chat.id, update.effective_user.id)
-    count = WARNINGS.get(key, 0)
-    await update.message.reply_text(
-        f"عدد تحذيراتك: {count}"
-    )
-
-
-async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for member in update.message.new_chat_members:
-        await update.message.reply_text(
-            f"أهلاً بك {member.first_name} في PARADOX 404 🔥"
-        )
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
 
-    if not message or not message.text or chat.type == "private":
+    if not message or not user or user.is_bot:
         return
 
-    # إعفاء مشرفي المجموعة
-    if await is_admin(update, context):
+    member = await chat.get_member(user.id)
+    if member.status in ("administrator", "creator"):
         return
 
-    text = message.text.lower()
+    text = message.text or message.caption or ""
 
-    # فحص الألفاظ المسيئة
-    offensive = any(word in text for word in BAD_WORDS)
+    reason = None
 
-    # فحص الروابط
-    has_link = bool(URL_PATTERN.search(text))
+    if contains_link(text):
+        reason = "نشر رابط ممنوع"
 
-    if not offensive and not has_link:
-        if "مرحبا" in text or "السلام عليكم" in text:
-            await message.reply_text(
-                "وعليكم السلام ورحمة الله وبركاته ❤️"
-            )
+    elif any(word in text.split() for word in BAD_WORDS):
+        reason = "استخدام ألفاظ مسيئة"
+
+    if not reason:
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        logging.exception("Could not delete message")
         return
 
     key = (chat.id, user.id)
-    WARNINGS[key] = WARNINGS.get(key, 0) + 1
-    count = WARNINGS[key]
+    warnings[key] = warnings.get(key, 0) + 1
+    count = warnings[key]
 
-    if offensive:
-        reason = "استخدام ألفاظ مسيئة"
+    if count >= WARN_LIMIT:
+        try:
+            await chat.ban_member(user.id)
+            await context.bot.send_message(
+                chat.id,
+                f"🚫 تم حظر {user.first_name} بعد {count} إنذارات."
+            )
+            warnings[key] = 0
+        except Exception:
+            logging.exception("Could not ban member")
+            await context.bot.send_message(
+                chat.id,
+                f"⚠️ وصل {user.first_name} إلى {count} إنذارات، لكن تعذر حظره."
+            )
     else:
-        reason = "نشر رابط غير مسموح"
-
-    await message.reply_text(
-        f"⚠️ تنبيه من PARADOX 404\n"
-        f"العضو: {user.first_name}\n"
-        f"السبب: {reason}\n"
-        f"عدد التحذيرات: {count}\n"
-        f"يرجى الالتزام بقوانين المجموعة."
-    )
-
+        await context.bot.send_message(
+            chat.id,
+            f"⚠️ تحذير {count}/{WARN_LIMIT}\n"
+            f"العضو: {user.first_name}\n"
+            f"السبب: {reason}"
+        )
 
 def main():
     if not BOT_TOKEN:
@@ -132,21 +99,14 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("id", get_id))
-    app.add_handler(CommandHandler("warns", show_warns))
-
     app.add_handler(
-        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome)
+        MessageHandler(
+            filters.TEXT | filters.CAPTION,
+            moderate
+        )
     )
 
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
-
-    print("PARADOX 404 is running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
