@@ -2259,7 +2259,7 @@ async def handle_game_text(message, chat_id, user, text):
     answer = normalize_message(state.get("answer", ""))
     guess = normalized
     if kind == "detective":
-        guess = re.sub(r"^(?:اتهام|اتهم)s+", "", guess).strip()
+        guess = re.sub(r"^(?:اتهام|اتهم)\\s+", "", guess).strip()
     if kind == "truth_prompt":
         if int(state.get("player", 0)) != user.id:
             return False
