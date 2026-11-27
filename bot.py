@@ -514,6 +514,7 @@ def main_menu(user_id=None):
             InlineKeyboardButton("📋 الأوامر", callback_data="commands_help"),
         ],
         [InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="ai_menu")],
+        [InlineKeyboardButton("🎵 اليوتيوب", callback_data="youtube_menu")],
     ]
     if user_id is not None and is_bot_owner(user_id):
         rows.append([InlineKeyboardButton(
@@ -635,7 +636,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     owner_actions = (
-        "force_menu", "force_activate", "force_disable", "force_status"
+        "force_menu", "force_activate", "force_disable", "force_status",
+        "youtube_toggle",
     )
     if action in owner_actions and not is_bot_owner(user.id):
         await query.answer(
@@ -685,6 +687,46 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "المتفاعلين\nالمشرفون\nالمالكين\n"
             "المكتومين\nالمحظورين\nالمقيدين\nسجل الإدارة",
             reply_markup=back_keyboard(),
+        )
+
+    elif action == "youtube_menu":
+        youtube_enabled = data["settings"].get("youtube_enabled", True)
+        state_text = "🟢 مفعّل" if youtube_enabled else "🔴 متوقف"
+        control_text = (
+            "إيقاف اليوتيوب" if youtube_enabled else "تشغيل اليوتيوب"
+        )
+        await query.edit_message_text(
+            "🎵 مركز اليوتيوب\\n\\n"
+            f"الحالة الحالية: {state_text}\\n\\n"
+            "من هنا تگدر تتحكم بميزة البحث وتحميل الصوتيات المسموح بها "
+            "وإرسالها كملف MP3 داخل تيليجرام.\\n"
+            "هذا الإعداد عام على البوت كله، والتحكم بيه خاص بمالك البوت.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    ("🛑 " if youtube_enabled else "▶️ ") + control_text,
+                    callback_data="youtube_toggle",
+                )],
+                [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+            ]),
+        )
+
+    elif action == "youtube_toggle":
+        youtube_enabled = not data["settings"].get("youtube_enabled", True)
+        data["settings"]["youtube_enabled"] = youtube_enabled
+        save_data()
+        state_text = "🟢 تم تشغيل اليوتيوب" if youtube_enabled else "🔴 تم إيقاف اليوتيوب"
+        control_text = "إيقاف اليوتيوب" if youtube_enabled else "تشغيل اليوتيوب"
+        await query.edit_message_text(
+            "🎵 مركز اليوتيوب\\n\\n"
+            f"{state_text}\\n\\n"
+            "تگدر تغيّر الحالة من نفس الزر بأي وقت.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    ("🛑 " if youtube_enabled else "▶️ ") + control_text,
+                    callback_data="youtube_toggle",
+                )],
+                [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+            ]),
         )
 
     elif action == "ai_menu":
@@ -1961,6 +2003,9 @@ async def moderate(update, context):
 
     song_match = SONG_PATTERN.match(text)
     if song_match:
+        if not data["settings"].get("youtube_enabled", True):
+            await message.reply_text("🎵 ميزة اليوتيوب متوقفة حالياً من إعدادات البوت.")
+            return
         await search_song(message, chat.id, song_match.group(1))
         return
 
