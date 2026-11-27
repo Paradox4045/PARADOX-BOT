@@ -2623,6 +2623,118 @@ def youtube_search(query):
     return matches
 
 
+def download_archive_audio(query, output_dir):
+    """
+    Search Internet Archive for audio explicitly published under reusable
+    Creative Commons / public-domain terms, then download an audio file.
+    """
+    from urllib.parse import quote
+
+    headers = {"User-Agent": "PARADOX-404-NEXUS/1.0 (audio search)"}
+    clean_query = re.sub(r"[^\w\s'-]", " ", query, flags=re.UNICODE)
+    clean_query = re.sub(r"\s+", " ", clean_query).strip()
+    if not clean_query:
+        return None
+
+    search_url = "https://archive.org/advancedsearch.php"
+    search_params = {
+        "q": f'mediatype:audio AND title:("{clean_query}")',
+        "fl[]": ["identifier", "title", "creator", "licenseurl"],
+        "rows": 15,
+        "page": 1,
+        "output": "json",
+    }
+    response = requests.get(
+        search_url, params=search_params, headers=headers, timeout=20
+    )
+    response.raise_for_status()
+    docs = response.json().get("response", {}).get("docs", [])
+
+    for item in docs:
+        identifier = item.get("identifier")
+        license_url = str(item.get("licenseurl") or "").lower()
+        reusable = (
+            "creativecommons.org/licenses/by/" in license_url
+            or "creativecommons.org/licenses/by-sa/" in license_url
+            or "creativecommons.org/publicdomain/" in license_url
+            or "creativecommons.org/zero/" in license_url
+        )
+        if not identifier or not reusable:
+            continue
+
+        metadata_response = requests.get(
+            f"https://archive.org/metadata/{quote(identifier, safe='')}",
+            headers=headers,
+            timeout=20,
+        )
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+        files = metadata.get("files") or []
+
+        audio_files = []
+        for file_info in files:
+            name = str(file_info.get("name") or "")
+            lower_name = name.lower()
+            if not lower_name.endswith((".mp3", ".ogg", ".oga", ".wav", ".flac", ".m4a")):
+                continue
+            if file_info.get("private") == "true":
+                continue
+            try:
+                size = int(file_info.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            if size and size > 49 * 1024 * 1024:
+                continue
+            audio_files.append((name, size))
+
+        if not audio_files:
+            continue
+
+        # Prefer MP3 for Telegram compatibility, then OGG/M4A/WAV/FLAC.
+        priority = {".mp3": 0, ".ogg": 1, ".oga": 1, ".m4a": 2,
+                    ".wav": 3, ".flac": 4}
+        audio_files.sort(
+            key=lambda pair: priority.get(Path(pair[0]).suffix.lower(), 9)
+        )
+
+        for filename, expected_size in audio_files:
+            target = Path(output_dir) / ("archive_audio" + Path(filename).suffix.lower())
+            download_url = (
+                "https://archive.org/download/"
+                + quote(identifier, safe="")
+                + "/"
+                + quote(filename, safe="/")
+            )
+            with requests.get(
+                download_url, headers=headers, timeout=(20, 90), stream=True
+            ) as audio_response:
+                if audio_response.status_code != 200:
+                    continue
+                content_type = audio_response.headers.get("Content-Type", "").lower()
+                if "text/html" in content_type:
+                    continue
+                total = 0
+                with target.open("wb") as output:
+                    for chunk in audio_response.iter_content(chunk_size=256 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > 49 * 1024 * 1024:
+                            output.close()
+                            target.unlink(missing_ok=True)
+                            break
+                        output.write(chunk)
+                if target.is_file() and target.stat().st_size > 0:
+                    return {
+                        "path": str(target),
+                        "title": str(item.get("title") or query)[:64],
+                        "uploader": str(item.get("creator") or "Internet Archive")[:64],
+                        "license": item.get("licenseurl") or "Creative Commons",
+                    }
+
+    return None
+
+
 def download_permitted_youtube_mp3(query, output_dir):
     """
     Download only videos explicitly marked with a Creative Commons license.
@@ -2687,6 +2799,14 @@ def download_permitted_youtube_mp3(query, output_dir):
                 "uploader": (info.get("uploader") or "")[:64],
                 "license": info.get("license") or "Creative Commons",
             }
+
+    # Fallback: search a second source for openly licensed audio.
+    try:
+        archive_result = download_archive_audio(query, output_dir)
+        if archive_result:
+            return archive_result
+    except Exception:
+        logger.exception("Internet Archive audio search failed")
 
     return None
 
