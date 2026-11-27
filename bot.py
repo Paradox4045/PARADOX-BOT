@@ -4165,6 +4165,23 @@ WORD_QUESTIONS = [
     {"q": "ن ي ك س و س", "a": "نيكسوس"},
     {"q": "ك ت ا ب", "a": "كتاب"},
 ]
+RIDDLE_QUESTIONS = [
+    {"q": "شيء كلما أخذت منه كبر، شنو هو؟", "a": "الحفرة"},
+    {"q": "إله أسنان لكنه ما يعض، شنو هو؟", "a": "المشط"},
+    {"q": "يمشي بلا رجلين ويبچي بلا عينين، شنو هو؟", "a": "السحاب"},
+    {"q": "شيء تذبحه وتبچي عليه، شنو هو؟", "a": "البصل"},
+]
+PUZZLE_QUESTIONS = [
+    {"q": "عندي مدن بلا بيوت وأنهار بلا ماء، شنو أني؟", "a": "الخريطة"},
+    {"q": "شيء موجود بالسماء وإذا أضفت له حرف صار بالأرض، شنو هو؟", "a": "نجم"},
+    {"q": "شيء يسمع بلا أذن ويحچي بلا لسان، شنو هو؟", "a": "الصدى"},
+]
+MATH_QUESTIONS = [
+    {"q": "إذا عندك 5 تفاحات وأخذت 2، شكد صار عندك؟", "a": "2"},
+    {"q": "كم ناتج 7 × 8؟", "a": "56"},
+    {"q": "عدد إذا ضاعفته وضفت 6 صار 20، شنو هو؟", "a": "7"},
+    {"q": "كم ناتج 100 ÷ 4؟", "a": "25"},
+]
 TRUTH_PROMPTS = [
     "شنو أكثر موقف مضحك صار وياك؟",
     "شنو الشي اللي تتمنى تتعلمه؟",
@@ -4180,10 +4197,15 @@ DARE_PROMPTS = [
 
 def games_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔤 تحدي الكلمات", callback_data="game:word")],
-        [InlineKeyboardButton("🔢 خمن الرقم", callback_data="game:number")],
-        [InlineKeyboardButton("🧠 أسئلة الذكاء والثقافة", callback_data="game:quiz")],
-        [InlineKeyboardButton("🎲 حجر النرد", callback_data="game:dice")],
+        [InlineKeyboardButton("🔤 تحدي الكلمات", callback_data="game:word"),
+         InlineKeyboardButton("🔢 خمن الرقم", callback_data="game:number")],
+        [InlineKeyboardButton("🧠 أسئلة الذكاء والثقافة", callback_data="game:quiz"),
+         InlineKeyboardButton("🎲 حجر النرد", callback_data="game:dice")],
+        [InlineKeyboardButton("🎯 كيت", callback_data="game:kit"),
+         InlineKeyboardButton("❓ حزورة", callback_data="game:riddle")],
+        [InlineKeyboardButton("🧩 لغز", callback_data="game:puzzle"),
+         InlineKeyboardButton("➗ رياضيات", callback_data="game:math")],
+        [InlineKeyboardButton("🔀 فكك", callback_data="game:word")],
         [InlineKeyboardButton("🏆 المتصدرون", callback_data="game:leaders"),
          InlineKeyboardButton("⭐ نقاطي", callback_data="game:points")],
     ])
@@ -4225,6 +4247,29 @@ async def start_game(chat_id, message, game):
         item = random.choice(WORD_QUESTIONS)
         state = {"type": "word", "answer": item["a"], "question": item["q"]}
         prompt = "🔤 **فك الكلمة**\nرتّب الحروف التالية:\n" + item["q"] + "\n\nأول واحد يكتبها صح يفوز!"
+    elif game in ("kit", "riddle", "puzzle", "math"):
+        if game == "kit":
+            item = random.choice(GAME_QUESTIONS)
+            answer = item["a"][item["correct"]]
+            title = "🎯 كيت"
+            question = item["q"]
+        elif game == "riddle":
+            item = random.choice(RIDDLE_QUESTIONS)
+            answer = item["a"]
+            title = "❓ حزورة"
+            question = item["q"]
+        elif game == "puzzle":
+            item = random.choice(PUZZLE_QUESTIONS)
+            answer = item["a"]
+            title = "🧩 لغز"
+            question = item["q"]
+        else:
+            item = random.choice(MATH_QUESTIONS)
+            answer = item["a"]
+            title = "➗ رياضيات"
+            question = item["q"]
+        state = {"type": "text_answer", "answer": answer, "question": question}
+        prompt = f"{title}\\n{question}\\n\\nاكتبوا الجواب برسالة هنا. أول إجابة صحيحة تربح 3 نقاط ⭐"
     elif game == "number":
         number = random.randint(1, 20)
         state = {"type": "number", "answer": str(number), "question": "خمن الرقم"}
@@ -4294,7 +4339,14 @@ async def handle_game_text(message, chat_id, user, text, context):
     info = chat_data(chat_id)
     normalized = normalize_game_text(text)
     if normalized == "الالعاب":
-        await message.reply_text("🎮 ألعاب نيكسوس\nاختاروا اللعبة:", reply_markup=games_keyboard())
+        await message.reply_text("🎮 ألعاب نيكسوس\\nاختاروا اللعبة أو اكتبوا أمرها مباشرة داخل المجموعة.", reply_markup=games_keyboard())
+        return True
+    game_commands = {
+        "كيت": "kit", "حزورة": "riddle", "لغز": "puzzle",
+        "خمن": "number", "رياضيات": "math", "فكك": "word",
+    }
+    if normalized in game_commands:
+        await start_game(chat_id, message, game_commands[normalized])
         return True
     if normalized in ("المتصدرين", "متصدرين", "ترتيب الالعاب"):
         await message.reply_text(game_leaderboard(chat_id))
@@ -4338,6 +4390,16 @@ async def handle_game_text(message, chat_id, user, text, context):
         info["game_state"] = None
         save_data()
         await message.reply_text(f"👏 أحسنت {user.first_name}! كملت التحدي وربحت نقطة ⭐")
+        return True
+    if kind == "text_answer":
+        if guess == answer:
+            game_score(chat_id, user, 3)
+            info["game_state"] = None
+            save_data()
+            await message.reply_text(
+                f"🎉 أحسنت {user.first_name}! إجابة صحيحة وربحت 3 نقاط ⭐\\n\\n"
+                + game_leaderboard(chat_id)
+            )
         return True
     if kind == "number":
         if not guess.isdigit():
@@ -4444,7 +4506,9 @@ async def game_callback(update, context):
             await query.answer("تعذر رمي حجر النرد حالياً.", show_alert=True)
         return
     games = {"game:who": "who", "game:word": "word", "game:number": "number",
-             "game:quiz": "quiz", "game:detective": "detective", "game:truth": "truth"}
+             "game:quiz": "quiz", "game:detective": "detective", "game:truth": "truth",
+             "game:kit": "kit", "game:riddle": "riddle", "game:puzzle": "puzzle",
+             "game:math": "math"}
     game = games.get(action)
     if game:
         await query.answer()
