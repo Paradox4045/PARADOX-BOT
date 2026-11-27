@@ -5,6 +5,8 @@ import json
 import time
 import asyncio
 import logging
+import tempfile
+import shutil
 import difflib
 import unicodedata
 from pathlib import Path
@@ -1284,7 +1286,7 @@ async def show_logs(message, chat_id, actor, context):
 # =========================================================
 
 def youtube_search(query):
-    """Search YouTube and return public video links without downloading audio."""
+    """Search YouTube for candidate videos; no audio is downloaded here."""
     from yt_dlp import YoutubeDL
 
     options = {
@@ -1304,14 +1306,82 @@ def youtube_search(query):
             continue
         video_id = item.get("id")
         title = (item.get("title") or "").strip()
-        url = item.get("url") or item.get("webpage_url")
-        if video_id:
-            url = f"https://www.youtube.com/watch?v={video_id}"
-        if title and url and "youtube.com" in url:
-            matches.append({"title": title[:90], "url": url})
+        if video_id and title:
+            matches.append({
+                "title": title[:90],
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+            })
         if len(matches) >= 5:
             break
     return matches
+
+
+def download_permitted_youtube_mp3(query, output_dir):
+    """
+    Download only videos explicitly marked with a Creative Commons license.
+    Convert the permitted audio to MP3 using the bundled imageio-ffmpeg binary.
+    """
+    from yt_dlp import YoutubeDL
+    import imageio_ffmpeg
+
+    search_options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "noplaylist": True,
+        "socket_timeout": 20,
+    }
+    with YoutubeDL(search_options) as ydl:
+        search = ydl.extract_info(f"ytsearch5:{query}", download=False)
+
+    candidates = (search or {}).get("entries") or []
+    for candidate in candidates:
+        if not candidate or not candidate.get("id"):
+            continue
+        video_url = f"https://www.youtube.com/watch?v={candidate['id']}"
+
+        inspect_options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": True,
+            "socket_timeout": 20,
+        }
+        with YoutubeDL(inspect_options) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+
+        license_name = (info.get("license") or "").lower()
+        if "creative commons" not in license_name and "creativecommons.org" not in license_name:
+            continue
+
+        download_options = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "bestaudio/best",
+            "noplaylist": True,
+            "socket_timeout": 30,
+            "outtmpl": str(Path(output_dir) / "nexus_audio.%(ext)s"),
+            "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        }
+        with YoutubeDL(download_options) as ydl:
+            ydl.download([video_url])
+
+        mp3_path = Path(output_dir) / "nexus_audio.mp3"
+        if mp3_path.is_file() and mp3_path.stat().st_size > 0:
+            return {
+                "path": str(mp3_path),
+                "title": (info.get("title") or candidate.get("title") or "NEXUS Audio")[:64],
+                "uploader": (info.get("uploader") or "")[:64],
+                "license": info.get("license") or "Creative Commons",
+            }
+
+    return None
 
 
 async def search_song(message, chat_id, query):
@@ -1321,41 +1391,48 @@ async def search_song(message, chat_id, query):
         return
 
     status_message = await message.reply_text(
-        f"🔎 نيكسوس يبحث مباشرة في يوتيوب عن: {query}"
+        f"🔎 نيكسوس يبحث عن صوتيات مرخّصة للتنزيل: {query}"
     )
+    work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
     try:
-        results = await asyncio.wait_for(
-            asyncio.to_thread(youtube_search, query),
-            timeout=35,
+        result = await asyncio.wait_for(
+            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir),
+            timeout=180,
         )
-        if not results:
+        if not result:
             await status_message.edit_text(
-                "❌ ما حصلت نتائج بهالاسم على يوتيوب. جرّب تكتب اسم الأغنية بشكل أوضح."
+                "ما حصلت نتيجة موثّقة بترخيص Creative Commons ضمن نتائج البحث. "
+                "حتى نحافظ على حقوق أصحاب المحتوى، ما راح أنزّل صوتيات غير مصرّح بتنزيلها."
             )
             return
 
-        rows = [
-            [InlineKeyboardButton(
-                f"▶️ {item['title'][:55]}",
-                url=item["url"],
-            )]
-            for item in results
-        ]
-        await status_message.edit_text(
-            f"🎵 نتائج البحث المباشر من يوتيوب عن: {query}\n"
-            "اختار النتيجة حتى تفتح الأغنية على يوتيوب:",
-            reply_markup=InlineKeyboardMarkup(rows),
-            disable_web_page_preview=True,
-        )
+        audio_path = Path(result["path"])
+        if audio_path.stat().st_size > 49 * 1024 * 1024:
+            await status_message.edit_text(
+                "لقيت الصوتية، لكن حجم ملف MP3 أكبر من الحد المسموح لإرسالها هنا."
+            )
+            return
+
+        with audio_path.open("rb") as audio_file:
+            await message.reply_audio(
+                audio=audio_file,
+                title=result["title"],
+                performer=result["uploader"] or "NEXUS",
+                caption="🎵 تم إرسال الملف بصيغة MP3",
+            )
+        await status_message.delete()
+
     except asyncio.TimeoutError:
         await status_message.edit_text(
-            "⏳ بحث يوتيوب تأخر. جرّب مرة ثانية بعد قليل."
+            "⏳ التحميل أخذ وقت أطول من اللازم. جرّب مرة ثانية."
         )
     except Exception:
-        logger.exception("YouTube search failed")
+        logger.exception("Permitted YouTube audio download failed")
         await status_message.edit_text(
-            "⚠️ تعذر البحث في يوتيوب حالياً. حاول مرة ثانية بعد قليل."
+            "⚠️ تعذر تجهيز ملف MP3 حالياً. حاول مرة ثانية بعد قليل."
         )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # =========================================================
