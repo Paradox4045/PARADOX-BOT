@@ -1496,7 +1496,8 @@ async def handle_group_text_commands(update, context):
         if not await is_group_owner(chat.id, user.id, context):
             await message.reply_text("⛔ تشغيل الذكاء وإيقافه من صلاحية مالك المجموعة فقط.")
             return True
-        chat_data(chat.id)["nexus_ai_enabled"] = True        save_data()
+        chat_data(chat.id)["nexus_ai_enabled"] = True
+        save_data()
         await message.reply_text("✅ تم تشغيل ذكاء نيكسوس. تگدر تناديه هسه.")
         return True
     if ai_control in ("تعطيل الذكاء", "ايقاف الذكاء", "وقف الذكاء"):
