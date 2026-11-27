@@ -771,11 +771,23 @@ def protection_keyboard(chat_id):
         InlineKeyboardButton("⚠️ حد الإنذارات", callback_data=f"pw:{chat_id}"),
     ])
     rows.append([InlineKeyboardButton(
-        f"{'🟢' if info.get('raid_protection_enabled', True) else '🔴'} حماية الهجمات الجماعية",
+        "🚨 حماية الهجمات الجماعية",
         callback_data=f"raid:{chat_id}",
     )])
     rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")])
     return InlineKeyboardMarkup(rows)
+
+
+def raid_protection_keyboard(chat_id):
+    info = chat_data(chat_id)
+    enabled = bool(info.get("raid_protection_enabled", True))
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{'🟢 إيقاف الحماية' if enabled else '🔴 تشغيل الحماية'}",
+            callback_data=f"raid_toggle:{chat_id}",
+        )],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data=f"ap:{chat_id}")],
+    ])
 
 
 def protection_text(chat_id):
@@ -1238,6 +1250,32 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("بيانات غير صحيحة.", show_alert=True)
             return
         if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية عرض إعدادات الحماية.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        state = "مفعّلة 🟢" if info.get("raid_protection_enabled", True) else "متوقفة 🔴"
+        text = (
+            "🚨 حماية الهجمات الجماعية\n\n"
+            f"الحالة: {state}\n"
+            f"حد الرصد: {int(info.get('raid_join_limit', 5))} أعضاء\n"
+            f"الفترة: {int(info.get('raid_window_seconds', 30))} ثانية\n\n"
+            "عند تجاوز الحد، يرسل نيكسوس تنبيهاً ويسجل الحدث في سجل المجموعة. "
+            "لا تُنفّذ عقوبة تلقائية حتى لا يُعاقب الأعضاء بالخطأ."
+        )
+        await query.answer()
+        await query.edit_message_text(
+            text,
+            reply_markup=raid_protection_keyboard(chat_id),
+        )
+        return
+
+    if action.startswith("raid_toggle:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
             await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
             return
         info = chat_data(chat_id)
@@ -1249,8 +1287,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_action(chat_id, user, f"حماية الهجمات الجماعية: {state}")
         await query.answer(f"حماية الهجمات الجماعية {state}.")
         await query.edit_message_text(
-            protection_text(chat_id),
-            reply_markup=protection_keyboard(chat_id),
+            "🚨 حماية الهجمات الجماعية\n\n"
+            f"الحالة: {'مفعّلة 🟢' if info['raid_protection_enabled'] else 'متوقفة 🔴'}\n"
+            f"حد الرصد: {int(info.get('raid_join_limit', 5))} أعضاء\n"
+            f"الفترة: {int(info.get('raid_window_seconds', 30))} ثانية\n\n"
+            "عند تجاوز الحد، يرسل نيكسوس تنبيهاً ويسجل الحدث في سجل المجموعة. "
+            "لا تُنفّذ عقوبة تلقائية حتى لا يُعاقب الأعضاء بالخطأ.",
+            reply_markup=raid_protection_keyboard(chat_id),
         )
         return
 
