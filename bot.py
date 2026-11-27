@@ -4201,7 +4201,7 @@ def games_keyboard():
          InlineKeyboardButton("🔢 خمن الرقم", callback_data="game:number")],
         [InlineKeyboardButton("🧠 أسئلة الذكاء والثقافة", callback_data="game:quiz"),
          InlineKeyboardButton("🎲 حجر النرد", callback_data="game:dice")],
-        [InlineKeyboardButton("🎯 كيت", callback_data="game:kit"),
+        [InlineKeyboardButton("🎯 كت", callback_data="game:kit"),
          InlineKeyboardButton("❓ حزورة", callback_data="game:riddle")],
         [InlineKeyboardButton("🧩 لغز", callback_data="game:puzzle"),
          InlineKeyboardButton("➗ رياضيات", callback_data="game:math")],
@@ -4342,7 +4342,7 @@ async def handle_game_text(message, chat_id, user, text, context):
         await message.reply_text("🎮 ألعاب نيكسوس\\nاختاروا اللعبة أو اكتبوا أمرها مباشرة داخل المجموعة.", reply_markup=games_keyboard())
         return True
     game_commands = {
-        "كيت": "kit", "حزورة": "riddle", "لغز": "puzzle",
+        "كت": "kit", "حزورة": "riddle", "لغز": "puzzle",
         "خمن": "number", "رياضيات": "math", "فكك": "word",
     }
     if normalized in game_commands:
