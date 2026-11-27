@@ -53,7 +53,7 @@ DUPLICATE_WINDOW_SECONDS = 20
 DUPLICATE_SIMILARITY_LIMIT = 0.90
 DUPLICATE_MIN_LENGTH = 8
 DUPLICATE_HISTORY_LIMIT = 12
-DUPLICATE_MATCH_LIMIT = 1
+DUPLICATE_MATCH_LIMIT = 2
 
 DELETE_MAX_MESSAGES = 1000
 DELETE_TRACK_LIMIT = 3000
@@ -130,6 +130,20 @@ def normalize_message(text):
     return text
 
 
+def contains_message_link(message, text):
+    """يكشف الروابط الظاهرة والمخفية داخل النص أو الكابتشن."""
+    if LINK_PATTERN.search(text or ""):
+        return True
+    entities = list(message.entities or []) + list(message.caption_entities or [])
+    return any(getattr(entity, "type", "") in ("url", "text_link") for entity in entities)
+
+
+def contains_bad_word(text):
+    """يطابق الألفاظ المسيئة ككلمات مستقلة لتقليل الإنذارات الخاطئة."""
+    normalized_words = set(normalize_message(text).split())
+    return any(normalize_message(word) in normalized_words for word in BAD_WORDS)
+
+
 def is_duplicate_message(chat_id, user_id, text):
     """يكشف تكرار أو تشابه رسائل العضو خلال فترة قصيرة."""
     normalized = normalize_message(text)
@@ -162,8 +176,7 @@ def is_duplicate_message(chat_id, user_id, text):
     while len(history) > DUPLICATE_HISTORY_LIMIT:
         history.popleft()
 
-    # لا نعاقب العضو على أول تشابه؛ يلزم تكرار الرسالة ثلاث مرات
-    # (رسالتان سابقتان مشابهتان والرسالة الحالية).
+    # ننتظر رسالتين سابقتين متشابهتين قبل اعتبار الرسالة الحالية تكراراً.
     return similar_matches >= DUPLICATE_MATCH_LIMIT
 
 
@@ -1704,7 +1717,7 @@ async def moderate(update, context):
         await message.reply_text(f"🔒 {blocked}.")
         return
 
-    if locks.get("links", True) and LINK_PATTERN.search(text):
+    if locks.get("links", True) and contains_message_link(message, text):
         try:
             await message.delete()
         except TelegramError:
@@ -1726,7 +1739,7 @@ async def moderate(update, context):
             )
             return
 
-    if any(word in text.lower() for word in BAD_WORDS):
+    if contains_bad_word(text):
         try:
             await message.delete()
         except TelegramError:
