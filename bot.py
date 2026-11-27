@@ -728,9 +728,9 @@ async def render_bot_groups(context):
         if item.get("status") == "administrator"
     )
     return (
-        f"👥 مجموعات PARADOX 404\\n\\n"
-        f"📌 المجموعات الموجودة حالياً: {active}\\n"
-        f"🛡️ مجموعات البوت فيها مشرف: {admins}\\n\\n"
+        f"👥 مجموعات PARADOX 404\n\n"
+        f"📌 المجموعات الموجودة حالياً: {active}\n"
+        f"🛡️ مجموعات البوت فيها مشرف: {admins}\n\n"
         "اختار مجموعة لعرض تفاصيلها:"
     )
 
@@ -751,11 +751,11 @@ def bot_group_detail_text(chat_id, info):
     count = info.get("member_count")
     count_text = str(count) if count is not None else "غير متاح"
     return (
-        f"👥 تفاصيل المجموعة\\n\\n"
-        f"🏷️ الاسم: {info.get('title') or 'غير معروف'}\\n"
-        f"🆔 المعرّف: {chat_id}\\n"
-        f"📍 حالة البوت: {status_text}\\n"
-        f"👤 عدد الأعضاء: {count_text}\\n"
+        f"👥 تفاصيل المجموعة\n\n"
+        f"🏷️ الاسم: {info.get('title') or 'غير معروف'}\n"
+        f"🆔 المعرّف: {chat_id}\n"
+        f"📍 حالة البوت: {status_text}\n"
+        f"👤 عدد الأعضاء: {count_text}\n"
         f"➕ أُضيف بواسطة: {added_by}"
     )
 
@@ -3254,6 +3254,7 @@ async def initialize_group_on_bot_join(update, context):
 
     if old_status in ("left", "kicked") and is_present:
         record["joined_at"] = int(time.time())
+        record["admin_notified"] = False
         record["added_by_id"] = actor.id if actor else None
         record["added_by_name"] = actor.full_name if actor else "غير معروف"
         record["added_by_username"] = actor.username if actor else None
@@ -3285,9 +3286,9 @@ async def initialize_group_on_bot_join(update, context):
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=(
-                    "✅ تم تجهيز PARADOX 404 تلقائياً!\\n\\n"
-                    "🔐 تم إنشاء نظام مستقل لهذه المجموعة.\\n"
-                    "👑 الرتب والصلاحيات والحماية والسجلات خاصة بهذه المجموعة.\\n"
+                    "✅ تم تجهيز PARADOX 404 تلقائياً!\n\n"
+                    "🔐 تم إنشاء نظام مستقل لهذه المجموعة.\n"
+                    "👑 الرتب والصلاحيات والحماية والسجلات خاصة بهذه المجموعة.\n"
                     "📋 لوحة التحكم والترتيب والميزات موحّدة مع بقية المجموعات."
                 ),
             )
@@ -3297,20 +3298,22 @@ async def initialize_group_on_bot_join(update, context):
     save_data()
 
     # إشعار المالك الأساسي عند إضافة البوت مشرفاً أو ترقيته إلى مشرف.
-    if is_admin_now and not was_admin:
+    if is_admin_now and not was_admin and not record.get("admin_notified", False):
         added_by = actor.full_name if actor else "غير معروف"
         username = f" (@{actor.username})" if actor and actor.username else ""
         try:
             await context.bot.send_message(
                 chat_id=int(BOT_OWNER_ID),
                 text=(
-                    "🔔 تم إضافة بوت PARADOX 404 مشرفاً في مجموعة جديدة!\\n\\n"
-                    f"🏷️ اسم المجموعة: {chat.title or 'بدون اسم'}\\n"
-                    f"🆔 معرّف المجموعة: {chat.id}\\n"
-                    f"👤 أُضيف بواسطة: {added_by}{username}\\n"
+                    "🔔 تم إضافة بوت PARADOX 404 مشرفاً في مجموعة جديدة!\n\n"
+                    f"🏷️ اسم المجموعة: {chat.title or 'بدون اسم'}\n"
+                    f"🆔 معرّف المجموعة: {chat.id}\n"
+                    f"👤 أُضيف بواسطة: {added_by}{username}\n"
                     f"📍 حالة البوت: مشرف"
                 ),
             )
+            record["admin_notified"] = True
+            save_data()
         except (TelegramError, ValueError):
             logger.warning(
                 "Could not notify bot owner about group %s", chat.id
