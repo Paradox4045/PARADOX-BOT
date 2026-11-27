@@ -173,6 +173,7 @@ DEFAULT_DATA = {
 
 spam_tracker = defaultdict(deque)
 duplicate_tracker = defaultdict(deque)
+raid_join_tracker = defaultdict(deque)
 
 group_message_history = defaultdict(
     lambda: deque(maxlen=DELETE_TRACK_LIMIT)
@@ -335,6 +336,12 @@ def chat_data(chat_id):
     info.setdefault("protection_exemptions", [])
     info.setdefault("bad_words_enabled", True)
     info.setdefault("bot_join_monitor", True)
+    # حماية الهجمات الجماعية: رصد دفعات الانضمام مع تنبيه دون عقوبة تلقائية.
+    info.setdefault("raid_protection_enabled", True)
+    info.setdefault("raid_join_limit", 5)
+    info.setdefault("raid_window_seconds", 30)
+    info.setdefault("raid_alert_cooldown", 300)
+    info.setdefault("raid_last_alert", 0)
     info.setdefault("allowed_links", [])
     info.setdefault("protection_enabled", True)
     info.setdefault("warning_limit", WARN_LIMIT)
@@ -763,6 +770,10 @@ def protection_keyboard(chat_id):
         InlineKeyboardButton("👥 الاستثناءات", callback_data=f"pe:{chat_id}"),
         InlineKeyboardButton("⚠️ حد الإنذارات", callback_data=f"pw:{chat_id}"),
     ])
+    rows.append([InlineKeyboardButton(
+        f"{'🟢' if info.get('raid_protection_enabled', True) else '🔴'} حماية الهجمات الجماعية",
+        callback_data=f"raid:{chat_id}",
+    )])
     rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")])
     return InlineKeyboardMarkup(rows)
 
@@ -776,6 +787,11 @@ def protection_text(chat_id):
     lines.append(f"{'🟢' if info.get('bad_words_enabled', True) else '🔴'} حماية الكلمات المسيئة")
     lines.append(f"{'🟢' if info.get('bot_join_monitor', True) else '🔴'} مراقبة دخول البوتات")
     lines.append(f"حد الإنذارات قبل الكتم: {int(info.get('warning_limit', WARN_LIMIT))}")
+    lines.append(
+        f"{'🟢' if info.get('raid_protection_enabled', True) else '🔴'} "
+        f"حماية الهجمات الجماعية (تنبيه عند {int(info.get('raid_join_limit', 5))} أعضاء "
+        f"خلال {int(info.get('raid_window_seconds', 30))} ثانية)"
+    )
     return "\n".join(lines)
 
 
@@ -1213,6 +1229,29 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.answer()
         await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
+        return
+
+    if action.startswith("raid:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        info["raid_protection_enabled"] = not bool(
+            info.get("raid_protection_enabled", True)
+        )
+        save_data()
+        state = "مفعّلة" if info["raid_protection_enabled"] else "متوقفة"
+        log_action(chat_id, user, f"حماية الهجمات الجماعية: {state}")
+        await query.answer(f"حماية الهجمات الجماعية {state}.")
+        await query.edit_message_text(
+            protection_text(chat_id),
+            reply_markup=protection_keyboard(chat_id),
+        )
         return
 
     if action.startswith("pl:"):
@@ -2847,6 +2886,59 @@ async def nexus_ai_reply(message, chat_id, user, text):
         return True
 
 
+async def monitor_group_joins(update, context):
+    """يرصد دفعات الانضمام السريعة ويبلغ المجموعة دون تنفيذ عقوبة تلقائية."""
+    member_update = update.chat_member
+    chat = update.effective_chat
+    if not member_update or not chat:
+        return
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return
+
+    old_status = member_update.old_chat_member.status
+    new_status = member_update.new_chat_member.status
+    if old_status not in ("left", "kicked") or new_status not in ("member", "administrator"):
+        return
+
+    joined_user = member_update.new_chat_member.user
+    if joined_user.is_bot:
+        return
+
+    info = chat_data(chat.id)
+    if not info.get("raid_protection_enabled", True):
+        return
+
+    now = time.time()
+    window = max(5, min(300, int(info.get("raid_window_seconds", 30))))
+    limit = max(3, min(50, int(info.get("raid_join_limit", 5))))
+    queue = raid_join_tracker[chat.id]
+    queue.append(now)
+    while queue and now - queue[0] > window:
+        queue.popleft()
+
+    cooldown = max(60, min(3600, int(info.get("raid_alert_cooldown", 300))))
+    if len(queue) < limit or now - float(info.get("raid_last_alert", 0)) < cooldown:
+        return
+
+    info["raid_last_alert"] = now
+    save_data()
+    log_action(
+        chat.id, None,
+        f"اشتباه هجوم جماعي: {len(queue)} أعضاء خلال {window} ثانية",
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=(
+                "🚨 تنبيه أمني: رصدت حماية PARADOX 404 انضمام عدد كبير "
+                f"من الأعضاء ({len(queue)}) خلال {window} ثانية.\n"
+                "يرجى مراجعة الأعضاء الجدد وسجل المجموعة. لم تُنفّذ أي عقوبة تلقائية."
+            ),
+        )
+    except TelegramError:
+        logger.exception("Could not send raid alert to chat %s", chat.id)
+
+
 async def initialize_group_on_bot_join(update, context):
     """إنشاء مساحة مستقلة للمجموعة تلقائياً عند إضافة البوت."""
     membership = update.my_chat_member
@@ -3487,6 +3579,10 @@ def main():
     app.add_handler(ChatMemberHandler(
         initialize_group_on_bot_join,
         ChatMemberHandler.MY_CHAT_MEMBER,
+    ))
+    app.add_handler(ChatMemberHandler(
+        monitor_group_joins,
+        ChatMemberHandler.CHAT_MEMBER,
     ))
 
     app.add_handler(MessageHandler(
