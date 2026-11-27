@@ -335,6 +335,7 @@ def chat_data(chat_id):
     info.setdefault("allowed_links", [])
     info.setdefault("protection_enabled", True)
     info.setdefault("warning_limit", WARN_LIMIT)
+    info.setdefault("bot_paused", False)
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
     info.setdefault("nexus_ai_enabled", True)
@@ -911,7 +912,7 @@ async def render_group_stats(chat_id, context):
     )
 
 
-async def render_admin_logs(chat_id):
+def render_admin_logs(chat_id):
     logs = chat_data(chat_id)["logs"][-15:]
     if not logs:
         return "📋 ماكو عمليات إدارية مسجلة بعد."
@@ -2089,6 +2090,20 @@ async def handle_group_text_commands(update, context):
                 message, chat.id, user, context, role_command_text
             )
             return True
+        if role_command_normalized in ("الصلاحيات", "سجل الادارة", "حالة المجموعة"):
+            if role_command_normalized == "سجل الادارة":
+                await show_logs(message, chat.id, user, context)
+            elif role_command_normalized == "حالة المجموعة":
+                if await has_permission(chat.id, user.id, "stats", context):
+                    await message.reply_text(await render_group_stats(chat.id, context))
+                else:
+                    await message.reply_text("⛔ ما عندك صلاحية عرض الإحصائيات.")
+            else:
+                if await can_manage_panel(chat.id, user.id, context):
+                    await message.reply_text("🛡️ الإدارة والحماية", reply_markup=management_keyboard(chat.id))
+                else:
+                    await message.reply_text("⛔ ما عندك صلاحية فتح لوحة الإدارة.")
+            return True
 
     if panel_command in ("استثناء الحماية", "الغاء استثناء الحماية", "إلغاء استثناء الحماية"):
         if not await has_permission(chat.id, user.id, "protection", context):
@@ -2111,6 +2126,30 @@ async def handle_group_text_commands(update, context):
         save_data()
         await message.reply_text(reply_text)
         log_action(chat.id, user, action_name, target)
+        return True
+
+    pause_command = normalize_message((message.text or "").strip().lstrip("/"))
+    if pause_command in ("ايقاف البوت", "إيقاف البوت", "تشغيل البوت"):
+        if not await has_permission(chat.id, user.id, "bot_control", context):
+            await message.reply_text("⛔ هذا الأمر خاص بالمالك أو من فُوّض له.")
+            return True
+        paused = pause_command in ("ايقاف البوت", "إيقاف البوت")
+        chat_data(chat.id)["bot_paused"] = paused
+        save_data()
+        log_action(chat.id, user, "إيقاف البوت داخل المجموعة" if paused else "تشغيل البوت داخل المجموعة")
+        await message.reply_text("🛑 تم إيقاف وظائف البوت بهذه المجموعة." if paused else "✅ رجع PARADOX 404 للعمل بهذه المجموعة.")
+        return True
+    if chat_data(chat.id).get("bot_paused", False):
+        return True
+
+    if pause_command in ("الصلاحيات", "إدارة الصلاحيات", "الإدارة والحماية"):
+        if not await can_manage_panel(chat.id, user.id, context):
+            await message.reply_text("⛔ ما عندك صلاحية فتح لوحة الإدارة.")
+        else:
+            await message.reply_text(
+                "🛡️ الإدارة والحماية\\nاختار الرتبة أو قسم الحماية:",
+                reply_markup=management_keyboard(chat.id),
+            )
         return True
 
     # تحكم مالك البوت الأساسي باليوتيوب من داخل المجموعة فقط.
