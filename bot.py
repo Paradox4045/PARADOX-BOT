@@ -970,6 +970,52 @@ async def render_group_stats(chat_id, context):
     )
 
 
+def statistics_keyboard(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 الملخص العام", callback_data=f"sx:{chat_id}:overview")],
+        [InlineKeyboardButton("💬 الرسائل والتفاعل", callback_data=f"sx:{chat_id}:activity")],
+        [InlineKeyboardButton("🛡️ المشرفون والرتب", callback_data=f"sx:{chat_id}:admins")],
+        [InlineKeyboardButton("⚠️ الإنذارات", callback_data=f"sx:{chat_id}:warnings")],
+        [InlineKeyboardButton("🔇 المكتومون", callback_data=f"sx:{chat_id}:muted"),
+         InlineKeyboardButton("🚫 المحظورون", callback_data=f"sx:{chat_id}:banned")],
+        [InlineKeyboardButton("⛔ المقيّدون", callback_data=f"sx:{chat_id}:restricted")],
+        [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"sx:{chat_id}:logs")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+    ])
+
+
+async def render_statistics_section(chat_id, section, context):
+    info = chat_data(chat_id)
+    if section == "overview":
+        return await render_group_stats(chat_id, context)
+    if section == "activity":
+        activity = info.get("activity", {})
+        total = sum(int(item.get("count", 0)) for item in activity.values())
+        tracked = len(info.get("message_history", []))
+        top = await show_top_users(chat_id)
+        return (
+            "💬 إحصائيات الرسائل والتفاعل\n\n"
+            f"📝 مجموع الرسائل المسجلة للأعضاء: {total}\n"
+            f"🗑️ الرسائل الموجودة بسجل التتبع: {tracked}\n\n"
+            f"{top}"
+        )
+    if section == "admins":
+        return await list_admins(chat_id, context)
+    if section == "warnings":
+        records = info.get("warnings", {})
+        if not records:
+            return "⚠️ سجل الإنذارات\n\nماكو إنذارات مسجلة حالياً."
+        rows = ["⚠️ سجل الإنذارات:"]
+        for uid, count in list(records.items())[:100]:
+            rows.append(f"• المعرف: {uid} — عدد الإنذارات: {count}")
+        return "\n".join(rows)
+    if section in ("muted", "banned", "restricted"):
+        return await list_tracked(chat_id, section)
+    if section == "logs":
+        return render_admin_logs(chat_id)
+    return "هذا القسم غير متوفر حالياً."
+
+
 def render_admin_logs(chat_id):
     logs = chat_data(chat_id)["logs"][-15:]
     if not logs:
@@ -1062,6 +1108,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "perm_close":
         await query.answer()
         await query.edit_message_text("تم إغلاق إعدادات الصلاحيات.")
+        return
+
+    if action.startswith("sg:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("معرّف مجموعة غير صحيح.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "stats", context):
+            await query.answer("ما عندك صلاحية عرض إحصائيات هذه المجموعة.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            "📊 الإحصائيات\nاختار القسم اللي تريد تعرضه:",
+            reply_markup=statistics_keyboard(chat_id),
+        )
+        return
+
+    if action.startswith("sx:"):
+        try:
+            _, raw_chat_id, section = action.split(":", 2)
+            chat_id = int(raw_chat_id)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "stats", context):
+            await query.answer("ما عندك صلاحية عرض هذا القسم.", show_alert=True)
+            return
+        await query.answer()
+        body = await render_statistics_section(chat_id, section, context)
+        await query.edit_message_text(
+            body,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع للإحصائيات", callback_data=f"sg:{chat_id}")]
+            ]),
+        )
         return
 
     if action == "rank_system":
@@ -1450,12 +1532,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif action == "statistics":
-        await query.edit_message_text(
-            "📊 الإحصائيات والقوائم\n\n"
-            "المتفاعلين\nالمشرفون\nالمالكين\n"
-            "المكتومين\nالمحظورين\nالمقيدين\nسجل الإدارة",
-            reply_markup=back_keyboard(),
-        )
+        if query.message and query.message.chat.type == ChatType.PRIVATE:
+            rows = []
+            for saved_chat_id, saved_info in data.get("chats", {}).items():
+                title = (saved_info.get("title") or saved_chat_id)[:45]
+                rows.append([InlineKeyboardButton(
+                    f"👥 {title}", callback_data=f"sg:{saved_chat_id}"
+                )])
+            rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+            await query.edit_message_text(
+                "📊 الإحصائيات\n\nاختار المجموعة لعرض إحصائياتها:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        else:
+            chat_id = query.message.chat.id
+            if not await has_permission(chat_id, user.id, "stats", context):
+                await query.answer("ما عندك صلاحية عرض الإحصائيات.", show_alert=True)
+                return
+            await query.edit_message_text(
+                "📊 الإحصائيات\nاختار القسم اللي تريد تعرضه:",
+                reply_markup=statistics_keyboard(chat_id),
+            )
 
     elif action == "ai_menu":
         await query.edit_message_text(
