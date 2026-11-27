@@ -1985,7 +1985,7 @@ async def moderate(update, context):
     # إذا كانت ميزة يوتيوب متوقفة، نتجاهل أي رسالة تبدأ بأمر يوت بصمت
     # قبل تسجيل النشاط أو تشغيل أي معالجة أخرى.
     if (
-        re.match(r"^\\s*يوت(?:\\s|$)", text, re.I)
+        re.match(r"^\s*يوت(?:\s|$)", text, re.I)
         and not data["settings"].get("youtube_enabled", True)
     ):
         return
