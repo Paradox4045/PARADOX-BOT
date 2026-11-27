@@ -811,6 +811,10 @@ async def show_role_assignment(message, chat_id, actor, target, role, context):
     if target.is_bot or target.id == actor.id:
         await message.reply_text("⛔ ما أگدر أعيّن نفسك أو حساب بوت كرتبة إدارية.")
         return
+    target_member = await get_member(chat_id, target.id, context)
+    if target_member and target_member.status == "creator" and role != "owner":
+        await message.reply_text("⛔ منشئ المجموعة يبقى المالك الأصلي ولا يمكن منحه رتبة أدنى.")
+        return
     if role == "owner" and not (is_bot_owner(actor.id) or await is_group_owner(chat_id, actor.id, context)):
         await message.reply_text("⛔ تعيين المالك خاص بمالك البوت أو منشئ المجموعة.")
         return
@@ -869,8 +873,12 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
                   or await has_permission(chat_id, actor.id, "manage_roles", context)):
             await message.reply_text("⛔ ما عندك صلاحية عزل الرتب.")
             return True
+        target_member = await get_member(chat_id, target.id, context)
+        if target_member and target_member.status == "creator":
+            await message.reply_text("⛔ ما يمكن عزل منشئ المجموعة الأصلي.")
+            return True
         if role == "owner" and target.id == actor.id and not is_bot_owner(actor.id):
-            await message.reply_text("⛔ منشئ المجموعة لا يمكن عزله من رتبته الأصلية.")
+            await message.reply_text("⛔ ما تگدر تسحب رتبة المالك من نفسك.")
             return True
         info = chat_data(chat_id)
         old = info["roles"].get(str(target.id), {})
@@ -1663,6 +1671,19 @@ async def admin_action(update, context, action):
             "⛔ ما أگدر أنفذ الأمر على نفسك أو على بوت."
         )
         return
+
+    target_role = assigned_role(chat.id, target.id)
+    if await is_group_owner(chat.id, target.id, context):
+        await message.reply_text("⛔ ما أگدر أنفذ عقوبة على منشئ المجموعة أو مالكها.")
+        return
+    if target_role in ROLE_ORDER:
+        actor_role = "owner" if await is_group_owner(chat.id, actor.id, context) else assigned_role(chat.id, actor.id)
+        actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
+        target_level = ROLE_ORDER.index(target_role)
+        if actor_level >= target_level and not is_bot_owner(actor.id):
+            await message.reply_text("⛔ ما تگدر تنفذ إجراء على شخص رتبته مساوية أو أعلى من رتبتك.")
+            log_action(chat.id, actor, "محاولة إجراء على رتبة أعلى أو مساوية", target)
+            return
 
     try:
         if action == "mute":
