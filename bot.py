@@ -2236,8 +2236,9 @@ async def start_game(chat_id, message, game):
         return
     else:
         return
+    sent = await message.reply_text(prompt, parse_mode="Markdown")
+    info["game_state"]["message_id"] = sent.message_id
     save_data()
-    await message.reply_text(prompt, parse_mode="Markdown")
 
 async def handle_game_text(message, chat_id, user, text):
     info = chat_data(chat_id)
@@ -2256,6 +2257,12 @@ async def handle_game_text(message, chat_id, user, text):
     if not state:
         return False
     kind = state.get("type")
+    if kind in ("who", "word", "detective", "truth_prompt"):
+        if (
+            not message.reply_to_message
+            or message.reply_to_message.message_id != int(state.get("message_id", 0))
+        ):
+            return False
     answer = normalize_message(state.get("answer", ""))
     guess = normalized
     if kind == "detective":
@@ -2307,10 +2314,14 @@ async def game_callback(update, context):
             return
         mode = action.rsplit(":", 1)[1]
         prompt = random.choice(TRUTH_PROMPTS if mode == "truth" else DARE_PROMPTS)
-        chat_data(chat_id)["game_state"] = {"type": "truth_prompt", "player": user.id}
-        save_data()
         await query.answer("اختيار موفق!")
-        await message.reply_text(("💬 صراحة: " if mode == "truth" else "😈 تحدي: ") + prompt)
+        sent = await message.reply_text(("💬 صراحة: " if mode == "truth" else "😈 تحدي: ") + prompt)
+        chat_data(chat_id)["game_state"] = {
+            "type": "truth_prompt",
+            "player": user.id,
+            "message_id": sent.message_id,
+        }
+        save_data()
         return
     if action.startswith("game:answer:"):
         state = chat_data(chat_id).get("game_state") or {}
