@@ -1773,8 +1773,17 @@ async def handle_group_text_commands(update, context):
 # WARNINGS / AUTOMATIC MODERATION
 # =========================================================
 
+async def delete_notice_after_delay(bot, chat_id, message_id):
+    """يحذف رسالة الإنذار بعد 10 ثوانٍ دون تعطيل استقبال رسائل المجموعة."""
+    await asyncio.sleep(10)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except TelegramError:
+        logger.debug("Temporary moderation notice already deleted or unavailable")
+
+
 async def issue_warning(message, chat_id, user, context, reason):
-    """يسجل الإنذار ويرسل التنبيه إلى المجموعة حتى لو حُذفت الرسالة الأصلية."""
+    """يسجل الإنذار ويرسل تنبيهاً مؤقتاً يُحذف بعد 10 ثوانٍ."""
     info = chat_data(chat_id)
     uid = str(user.id)
     current = min(
@@ -1809,7 +1818,12 @@ async def issue_warning(message, chat_id, user, context, reason):
         )
 
     try:
-        await context.bot.send_message(chat_id=chat_id, text=notice)
+        sent_notice = await context.bot.send_message(chat_id=chat_id, text=notice)
+        context.application.create_task(
+            delete_notice_after_delay(
+                context.bot, chat_id, sent_notice.message_id
+            )
+        )
     except TelegramError:
         logger.exception("Could not send moderation warning to chat")
 
