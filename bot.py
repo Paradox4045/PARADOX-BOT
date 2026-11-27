@@ -1986,10 +1986,10 @@ async def nexus_ai_reply(message, chat_id, user, text):
     replied_to_bot = bool(
         message.reply_to_message
         and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.id == message.get_bot().id
-    ) if hasattr(message, "get_bot") else False
+        and getattr(message.reply_to_message.from_user, "is_bot", False)
+    )
 
-    addressed = re.match(r"^(?:يا\\s+)?(?:نيكسوس|نكسوس)\\b[\\s،,:：-]*(.*)$", raw_text, re.I)
+    addressed = re.match(r"^(?:يا\s+)?(?:نيكسوس|نكسوس)\b[\s،,:：-]*(.*)$", raw_text, re.I)
     if not addressed and not replied_to_bot:
         return False
 
