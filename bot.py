@@ -3,6 +3,7 @@ import os
 import re
 import json
 import time
+import random
 import asyncio
 import logging
 import tempfile
@@ -241,6 +242,8 @@ def chat_data(chat_id):
     info.setdefault("welcome", True)
     info.setdefault("nexus_ai_enabled", True)
     info.setdefault("message_history", [])
+    info.setdefault("game_scores", {})
+    info.setdefault("game_state", None)
     return info
 
 
@@ -2006,6 +2009,9 @@ async def moderate(update, context):
     if await handle_group_text_commands(update, context):
         return
 
+    if await handle_game_text(message, chat.id, user, text):
+        return
+
     # الرد الترحيبي التلقائي عند ذكر اسم نيكسوس متوقف.
     # تبقى أوامر NEXUS CORE ومعالجة بقية رسائل المجموعة فعالة.
 
@@ -2128,6 +2134,204 @@ async def moderate(update, context):
 
 
 # =========================================================
+# NEXUS GAMES
+# =========================================================
+
+GAME_QUESTIONS = [
+    {"q": "ما هو الكوكب المعروف بالكوكب الأحمر؟", "a": ["المريخ", "الزهرة", "زحل", "عطارد"], "correct": 0},
+    {"q": "كم عدد أضلاع المثلث؟", "a": ["2", "3", "4", "5"], "correct": 1},
+    {"q": "ما عاصمة العراق؟", "a": ["البصرة", "أربيل", "بغداد", "الموصل"], "correct": 2},
+    {"q": "ما أكبر محيط في العالم؟", "a": ["الأطلسي", "الهندي", "المتجمد", "الهادئ"], "correct": 3},
+]
+WHO_QUESTIONS = [
+    {"q": "أنا كوكب أحمر، ويُعرف بلقب الكوكب الأحمر. من أنا؟", "a": "المريخ"},
+    {"q": "أنا حيوان يُلقّب بملك الغابة. من أنا؟", "a": "الأسد"},
+    {"q": "أنا أسرع حيوان بري. من أنا؟", "a": "الفهد"},
+    {"q": "أنا أداة نعرف بها الوقت. من أنا؟", "a": "الساعة"},
+]
+WORD_QUESTIONS = [
+    {"q": "ب غ د ا د", "a": "بغداد"},
+    {"q": "م ر ي خ", "a": "مريخ"},
+    {"q": "ن ي ك س و س", "a": "نيكسوس"},
+    {"q": "ك ت ا ب", "a": "كتاب"},
+]
+TRUTH_PROMPTS = [
+    "شنو أكثر موقف مضحك صار وياك؟",
+    "شنو الشي اللي تتمنى تتعلمه؟",
+    "منو أكثر شخص تعتمد عليه؟",
+    "شنو أكثر صفة تحبها بنفسك؟",
+]
+DARE_PROMPTS = [
+    "اكتب جملة تمدح بيها شخصاً من الموجودين بالمجموعة.",
+    "اكتب اسم أكلة تحبها وكأنك تسوي إعلاناً عنها.",
+    "اكتب بيت شعر من تأليفك، حتى لو كان مضحكاً.",
+    "اكتب ثلاث كلمات تصف بيها نيكسوس.",
+]
+
+def games_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🕵️ من أنا؟", callback_data="game:who"),
+         InlineKeyboardButton("🔤 فك الكلمة", callback_data="game:word")],
+        [InlineKeyboardButton("🧠 تحدي المعلومات", callback_data="game:quiz"),
+         InlineKeyboardButton("🕵️ المحقق", callback_data="game:detective")],
+        [InlineKeyboardButton("🔥 صراحة أو تحدي", callback_data="game:truth")],
+        [InlineKeyboardButton("🏆 المتصدرون", callback_data="game:leaders"),
+         InlineKeyboardButton("⭐ نقاطي", callback_data="game:points")],
+    ])
+
+def game_score(chat_id, user, points=1):
+    scores = chat_data(chat_id)["game_scores"]
+    record = scores.setdefault(str(user.id), {"name": user.full_name, "points": 0, "wins": 0})
+    record["name"] = user.full_name
+    record["points"] = int(record.get("points", 0)) + points
+    record["wins"] = int(record.get("wins", 0)) + 1
+    save_data()
+
+def game_leaderboard(chat_id):
+    scores = chat_data(chat_id)["game_scores"]
+    ranked = sorted(scores.values(), key=lambda x: int(x.get("points", 0)), reverse=True)[:10]
+    if not ranked:
+        return "🏆 ماكو نقاط مسجلة لحد الآن. ابدأوا اللعب!"
+    return "🏆 متصدرو ألعاب نيكسوس\n\n" + "\n".join(
+        f"{i}. {item.get('name', 'عضو')} — ⭐ {item.get('points', 0)} نقطة"
+        for i, item in enumerate(ranked, 1)
+    )
+
+async def start_game(chat_id, message, game):
+    info = chat_data(chat_id)
+    if info.get("game_state"):
+        await message.reply_text("🎮 أكو لعبة شغالة حالياً! خلّصوها أولاً.")
+        return
+    if game == "who":
+        item = random.choice(WHO_QUESTIONS)
+        info["game_state"] = {"type": "who", "answer": item["a"], "question": item["q"]}
+        prompt = "🕵️ **من أنا؟**\n" + item["q"] + "\n\nاكتبوا الجواب بالمجموعة."
+    elif game == "word":
+        item = random.choice(WORD_QUESTIONS)
+        info["game_state"] = {"type": "word", "answer": item["a"], "question": item["q"]}
+        prompt = "🔤 **فك الكلمة**\nرتّب الحروف التالية:\n" + item["q"] + "\n\nأول واحد يكتبها صح يفوز!"
+    elif game == "quiz":
+        item = random.choice(GAME_QUESTIONS)
+        info["game_state"] = {"type": "quiz", "answer": item["correct"], "question": item["q"]}
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{label}. {answer}", callback_data=f"game:answer:{i}")
+        ] for i, answer in enumerate(item["a"])])
+        save_data()
+        await message.reply_text("🧠 **تحدي المعلومات**\n" + item["q"], reply_markup=keyboard, parse_mode="Markdown")
+        return
+    elif game == "detective":
+        info["game_state"] = {"type": "detective", "answer": "الحارس", "question": "من سرق المفتاح؟"}
+        prompt = ("🕵️ **قضية نيكسوس: المفتاح المفقود**\n"
+                  "ثلاثة أشخاص كانوا قرب الغرفة: الحارس، الطباخ، والبستاني.\n"
+                  "الدليل الأول: الأرض قرب الباب جافة رغم المطر.\n"
+                  "الدليل الثاني: الحارس وحده كان يحمل مظلة.\n"
+                  "من تتهم؟ اكتب: اتهام الحارس (أو اسم الشخص).")
+    elif game == "truth":
+        info["game_state"] = {"type": "truth_choice"}
+        save_data()
+        await message.reply_text("🔥 اختاروا: صراحة لو تحدي؟", reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("💬 صراحة", callback_data="game:truth:truth"),
+            InlineKeyboardButton("😈 تحدي", callback_data="game:truth:dare"),
+        ]]))
+        return
+    else:
+        return
+    save_data()
+    await message.reply_text(prompt, parse_mode="Markdown")
+
+async def handle_game_text(message, chat_id, user, text):
+    info = chat_data(chat_id)
+    normalized = normalize_message(text)
+    if normalized in ("الالعاب", "العاب", "لعبة", "العب"):
+        await message.reply_text("🎮 ألعاب نيكسوس\nاختاروا اللعبة:", reply_markup=games_keyboard())
+        return True
+    if normalized in ("المتصدرين", "متصدرين", "ترتيب الالعاب"):
+        await message.reply_text(game_leaderboard(chat_id))
+        return True
+    if normalized in ("نقاطي", "نقاطي بالالعاب"):
+        points = info["game_scores"].get(str(user.id), {}).get("points", 0)
+        await message.reply_text(f"⭐ {user.first_name}، عندك {points} نقطة.")
+        return True
+    state = info.get("game_state")
+    if not state:
+        return False
+    kind = state.get("type")
+    answer = normalize_message(state.get("answer", ""))
+    guess = normalized
+    if kind == "detective":
+        guess = re.sub(r"^(?:اتهام|اتهم)s+", "", guess).strip()
+    if kind not in ("who", "word", "detective"):
+        return False
+    if guess == answer or (kind == "detective" and guess in ("الحارس", "الحارس هو السارق")):
+        game_score(chat_id, user, 3 if kind == "detective" else 2)
+        info["game_state"] = None
+        save_data()
+        await message.reply_text(f"🎉 أحسنت {user.first_name}! إجابة صحيحة. ربحت {'3' if kind == 'detective' else '2'} نقاط ⭐\n\n" + game_leaderboard(chat_id))
+        return True
+    if kind == "detective" and guess in ("الطباخ", "البستاني"):
+        await message.reply_text("❌ مو هذا الشخص. ناقشوا الأدلة وجربوا مرة ثانية.")
+        return True
+    if kind in ("who", "word") and len(guess) > 1:
+        return False
+    return False
+
+async def game_callback(update, context):
+    query = update.callback_query
+    message = query.message
+    if not message or message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        await query.answer("الألعاب تعمل داخل المجموعة فقط.", show_alert=True)
+        return
+    action = query.data or ""
+    chat_id = message.chat.id
+    user = query.from_user
+    if action == "game:leaders":
+        await query.answer()
+        await query.message.reply_text(game_leaderboard(chat_id))
+        return
+    if action == "game:points":
+        points = chat_data(chat_id)["game_scores"].get(str(user.id), {}).get("points", 0)
+        await query.answer(f"رصيدك: {points} نقطة ⭐", show_alert=True)
+        return
+    if action.startswith("game:truth:"):
+        state = chat_data(chat_id).get("game_state") or {}
+        if state.get("type") != "truth_choice":
+            await query.answer("انتهى هذا الاختيار أو لم يعد فعالاً.", show_alert=True)
+            return
+        mode = action.rsplit(":", 1)[1]
+        prompt = random.choice(TRUTH_PROMPTS if mode == "truth" else DARE_PROMPTS)
+        chat_data(chat_id)["game_state"] = {"type": "truth_prompt", "player": user.id}
+        save_data()
+        await query.answer("اختيار موفق!")
+        await message.reply_text(("💬 صراحة: " if mode == "truth" else "😈 تحدي: ") + prompt)
+        return
+    if action.startswith("game:answer:"):
+        state = chat_data(chat_id).get("game_state") or {}
+        if state.get("type") != "quiz":
+            await query.answer("انتهى السؤال.", show_alert=True)
+            return
+        try:
+            choice = int(action.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("اختيار غير صالح.", show_alert=True)
+            return
+        if choice == int(state.get("answer", -1)):
+            game_score(chat_id, user, 2)
+            chat_data(chat_id)["game_state"] = None
+            save_data()
+            await query.answer("إجابة صحيحة! +2 ⭐")
+            await message.reply_text(f"🎉 {user.first_name} جاوب صح وربح نقطتين!\n\n" + game_leaderboard(chat_id))
+        else:
+            await query.answer("مو صحيح، جرّب غيرك!", show_alert=True)
+        return
+    games = {"game:who": "who", "game:word": "word", "game:quiz": "quiz",
+             "game:detective": "detective", "game:truth": "truth"}
+    game = games.get(action)
+    if game:
+        await query.answer()
+        await start_game(chat_id, message, game)
+
+
+# =========================================================
 # DELEGATED UNMUTE
 # =========================================================
 
@@ -2205,6 +2409,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(game_callback, pattern=r"^game:"))
     app.add_handler(CallbackQueryHandler(menu_callback))
 
     app.add_handler(MessageHandler(
