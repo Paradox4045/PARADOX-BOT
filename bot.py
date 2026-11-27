@@ -2527,9 +2527,10 @@ def protection_report_text(chat_id):
 
 async def handle_extra_group_features(message, chat_id, user, key, context):
     info = chat_data(chat_id)
+    raw_text = (message.text or "").strip()
 
     if key == "بلاغ" or key.startswith("بلاغ "):
-        details = key[4:].strip() if key.startswith("بلاغ ") else ""
+        details = re.sub(r"^/?بلاغ\s*", "", raw_text, flags=re.I).strip()
         replied = message.reply_to_message
         if not details and replied:
             details = (replied.text or replied.caption or "رسالة مرفقة")[:700]
@@ -2579,7 +2580,7 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
         if not await is_group_owner(chat_id, user.id, context):
             await message.reply_text("⛔ تعديل القوانين خاص بمالك المجموعة.")
             return True
-        rules = key.split(" ", 2)[2].strip()
+        rules = re.sub(r"^/?(?:تعيين_القوانين|تعيين القوانين|تعديل_القوانين|تعديل القوانين)\s+", "", raw_text, flags=re.I).strip()
         if not rules:
             await message.reply_text("اكتب القوانين بعد الأمر.")
             return True
@@ -2603,7 +2604,8 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
         if not await is_group_owner(chat_id, user.id, context):
             await message.reply_text("⛔ تخصيص الترحيب خاص بمالك المجموعة.")
             return True
-        info["welcome_text"] = key.split(" ", 2)[2].strip()[:900]
+        welcome_body = re.sub(r"^/?تعيين(?:_| )ترحيب\s+", "", raw_text, flags=re.I).strip()
+        info["welcome_text"] = welcome_body[:900]
         save_data()
         log_action(chat_id, user, "تعديل رسالة الترحيب")
         await message.reply_text("✅ تم حفظ الترحيب. استخدم {name} للاسم و{username} لليوزر.")
@@ -2646,9 +2648,9 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
         if not await is_group_owner(chat_id, user.id, context):
             await message.reply_text("⛔ جدولة الرسائل خاص بمالك المجموعة.")
             return True
-        parts = key.split(" ", 3)
-        seconds = parse_duration_seconds(parts[2] if len(parts) > 2 else "")
-        body = parts[3].strip() if len(parts) > 3 else ""
+        schedule_match = re.match(r"^/?جدولة(?:_| )رسالة\s+(\S+)\s+(.+)$", raw_text, re.I)
+        seconds = parse_duration_seconds(schedule_match.group(1)) if schedule_match else None
+        body = schedule_match.group(2).strip() if schedule_match else ""
         if seconds is None or not body:
             await message.reply_text("اكتب: جدولة رسالة 2h النص المراد إرساله.")
             return True
@@ -2729,7 +2731,8 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
     if key.startswith("استطلاع "):
         if not await require_permission(message, chat_id, user, "report", context):
             return True
-        pieces = [part.strip() for part in key[len("استطلاع "):].split("|") if part.strip()]
+        poll_body = re.sub(r"^/?استطلاع\s+", "", raw_text, flags=re.I).strip()
+        pieces = [part.strip() for part in poll_body.split("|") if part.strip()]
         if len(pieces) < 3 or len(pieces) > 11:
             await message.reply_text("اكتب: استطلاع السؤال | خيار 1 | خيار 2 (حتى 10 خيارات).")
             return True
