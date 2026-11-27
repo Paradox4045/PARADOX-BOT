@@ -34,6 +34,9 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("PARADOX_404")
+# منع تسجيل روابط Telegram التي تحتوي على رمز البوت السري.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "").strip()
