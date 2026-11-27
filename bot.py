@@ -397,7 +397,8 @@ async def is_group_owner(chat_id, user_id, context):
     return bool(member and member.status == "creator")
 
 
-async def is_admin(chat_id, user_id, context):    member = await get_member(chat_id, user_id, context)
+async def is_admin(chat_id, user_id, context):
+    member = await get_member(chat_id, user_id, context)
     return bool(member and member.status in ("administrator", "creator"))
 
 
