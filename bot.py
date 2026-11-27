@@ -132,9 +132,9 @@ ROLE_COMMANDS = {
     ],
 }
 ROLE_DEFAULTS = {
-    "owner": {key: True for key in ("assign_owner", "assign_roles", "manage_permissions", "bot_control", "logs", "ban", "mute", "warnings", "delete", "pin", "stats", "protection", "admins", "report", "welcome", "manage_roles")},
-    "deputy": {key: True for key in ("ban", "mute", "warnings", "delete", "stats", "logs", "report", "manage_roles")},
-    "admin": {key: True for key in ("ban", "mute", "warnings", "delete", "pin", "stats", "protection", "report")},
+    "owner": {key: True for key in ("assign_owner", "assign_roles", "manage_permissions", "bot_control", "logs", "ban", "mute", "unmute", "warnings", "delete", "pin", "stats", "protection", "admins", "report", "welcome", "manage_roles")},
+    "deputy": {key: True for key in ("ban", "mute", "unmute", "warnings", "delete", "stats", "logs", "report", "manage_roles")},
+    "admin": {key: True for key in ("ban", "mute", "unmute", "warnings", "delete", "pin", "stats", "protection", "report")},
     "supervisor": {key: True for key in ("mute", "warnings", "delete", "stats", "report")},
     "assistant": {key: True for key in ("stats", "report")},
     "observer": {key: True for key in ("stats", "logs", "report")},
@@ -1585,7 +1585,7 @@ async def admin_action(update, context, action):
 
     target = await reply_target(message)
     permission_for_action = {
-        "mute": "mute", "unmute": "mute",
+        "mute": "mute", "unmute": "unmute",
         "restrict": "mute", "unrestrict": "mute",
         "ban": "ban", "unban": "ban", "kick": "ban",
         "warn": "warnings", "clearwarn": "warnings",
@@ -1600,7 +1600,7 @@ async def admin_action(update, context, action):
             and await is_admin(chat.id, actor.id, context)
         )
         if not delegated and not await require_permission(
-            message, chat.id, actor, "mute", context
+            message, chat.id, actor, "unmute", context
         ):
             return
     elif not await require_permission(
@@ -2362,7 +2362,7 @@ async def handle_group_text_commands(update, context):
     if natural_delete:
         key = "حذف " + natural_delete.group(1)
 
-    delete_match = re.fullmatch(r"حذف\s+(\d+)", key)
+    delete_match = re.fullmatch(r"(?:حذف|تنظيف)\s+(\d+)", key)
     if delete_match:
         await delete_recent_messages(
             message,
@@ -2581,13 +2581,16 @@ async def handle_group_text_commands(update, context):
         "إلغاء التقييد": "unrestrict",
         "حظر": "ban",
         "إلغاء الحظر": "unban",
+        "فك الحظر": "unban",
         "طرد": "kick",
         "تحذير": "warn",
+        "إنذار": "warn",
         "مسح الإنذارات": "clearwarn",
         "حذف": "delete",
         "تثبيت": "pin",
         "إلغاء التثبيت": "unpin",
         "معلومات العضو": "info",
+        "معلومات عضو": "info",
         "رفع مشرف": "promote",
         "تنزيل مشرف": "demote",
     }
