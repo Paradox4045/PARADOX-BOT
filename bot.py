@@ -361,6 +361,11 @@ def chat_data(chat_id):
     info.setdefault("message_history", [])
     info.setdefault("game_scores", {})
     info.setdefault("game_state", None)
+    info.setdefault("scheduled_messages", [])
+    info.setdefault("rules_text", "")
+    info.setdefault("welcome_text", "أهلاً وسهلاً {name} 🌟\\nنورت PARADOX 404!")
+    info.setdefault("protection_report_enabled", False)
+    info.setdefault("next_protection_report_at", 0)
     return info
 
 
@@ -1730,14 +1735,29 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "commands_help":
         await query.edit_message_text(
-            "📋 أوامر الإدارة (بالرد على رسالة العضو)\n\n"
-            "كتم — إلغاء الكتم — حظر — إلغاء الحظر — طرد\n"
-            "تحذير — تقييد — إلغاء التقييد — حذف — حذف 100\n"
-            "تثبيت — إلغاء التثبيت — معلومات العضو\n"
-            "رفع مشرف — تنزيل مشرف — صلاحيات المشرف\n"
-            "مسح المكتومين — مسح الإنذارات\n"
-            "تفعيل الترحيب — إيقاف الترحيب\n\n"
-            "للأغاني: اكتب يوت ثم اسم الأغنية.",
+            "📋 مركز الأوامر — PARADOX 404\n\n"
+            "👮 الإدارة والعقوبات\n"
+            "كتم / كتم مؤقت 30m / فك الكتم\n"
+            "حظر / حظر مؤقت 2h / فك الحظر / طرد\n"
+            "تحذير / إزالة إنذار / مسح الإنذارات\n"
+            "حذف / حذف 20 / تثبيت / إلغاء التثبيت\n\n"
+            "👥 الأعضاء والمعلومات\n"
+            "معلومات العضو / المشرفين / المالك / المتفاعلين\n"
+            "المكتومين / المحظورين / المقيدين / مراقبة\n\n"
+            "🛡️ الحماية والأقفال\n"
+            "قفل وفتح الروابط والصور والفيديو والملفات والسبام\n"
+            "استثناء الحماية / إلغاء استثناء الحماية / تقرير الحماية\n"
+            "تقرير حماية دوري تشغيل أو إيقاف\n\n"
+            "📜 القوانين والترحيب\n"
+            "قوانين / تعيين القوانين نص / مسح القوانين\n"
+            "تعيين ترحيب نص / تفعيل الترحيب / إيقاف الترحيب\n\n"
+            "📨 البلاغات والإدارة\n"
+            "بلاغ نص / استطلاع سؤال | خيار 1 | خيار 2\n"
+            "جدولة رسالة 2h نص / الرسائل المجدولة\n"
+            "إلغاء رسالة مجدولة رقم / تصدير السجل\n\n"
+            "🧠 نيكسوس والوسائط والألعاب\n"
+            "يا نيكسوس سؤالك / يوت ثم اسم الأغنية / الألعاب\n\n"
+            "الأوامر تعمل حسب رتبتك وصلاحياتك، وبعضها يتطلب الرد على رسالة العضو.",
             reply_markup=back_keyboard(),
         )
 
@@ -2469,6 +2489,319 @@ async def search_song(message, chat_id, query):
 
 
 # =========================================================
+# EXTRA GROUP FEATURES
+# =========================================================
+
+def parse_duration_seconds(value):
+    match = re.fullmatch(r"(\d+)(s|m|h|d)", (value or "").strip().lower())
+    if not match:
+        return None
+    seconds = int(match.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+    return seconds if 10 <= seconds <= 31536000 else None
+
+
+def protection_report_text(chat_id):
+    info = chat_data(chat_id)
+    lines = [
+        "🛡️ تقرير حماية المجموعة",
+        f"🏷️ المجموعة: {info.get('title') or chat_id}",
+        f"🆔 المعرّف: {chat_id}", "",
+        f"الحماية العامة: {'مفعّلة' if info.get('protection_enabled', True) else 'متوقفة'}",
+        f"حماية الكلمات: {'مفعّلة' if info.get('bad_words_enabled', True) else 'متوقفة'}",
+        f"حد الإنذارات: {int(info.get('warning_limit', WARN_LIMIT))}",
+        f"الهجمات الجماعية: {'مفعّلة' if info.get('raid_protection_enabled', True) else 'متوقفة'}",
+        "", "حالة الأقفال:",
+    ]
+    for key, label in LOCK_TYPES.items():
+        lines.append(f"• {label}: {'مغلق' if info.get('locks', {}).get(key, False) else 'مفتوح'}")
+    warnings = info.get("warnings", {})
+    lines += [
+        "",
+        f"⚠️ أعضاء لديهم إنذارات: {sum(1 for count in warnings.values() if int(count) > 0)}",
+        f"🔇 المكتومون المسجلون: {len(info.get('muted', {}))}",
+        f"🚫 المحظورون المسجلون: {len(info.get('banned', {}))}",
+        f"📋 عمليات الإدارة المحفوظة: {len(info.get('logs', []))}",
+    ]
+    return "\n".join(lines)
+
+
+async def handle_extra_group_features(message, chat_id, user, key, context):
+    info = chat_data(chat_id)
+
+    if key == "بلاغ" or key.startswith("بلاغ "):
+        details = key[4:].strip() if key.startswith("بلاغ ") else ""
+        replied = message.reply_to_message
+        if not details and replied:
+            details = (replied.text or replied.caption or "رسالة مرفقة")[:700]
+        if not details:
+            await message.reply_text("اكتب البلاغ بعد الأمر، أو رد على رسالة واكتب: بلاغ")
+            return True
+        report = (
+            "📨 بلاغ سري جديد\n"
+            f"🏷️ المجموعة: {message.chat.title or chat_id}\n🆔 المجموعة: {chat_id}\n"
+            f"👤 المبلّغ: {user.full_name} (@{user.username or 'بدون يوزر'})\n"
+            f"🆔 المبلّغ: {user.id}\n\n📝 التفاصيل:\n{details}"
+        )
+        recipients = set()
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            recipients.update(item.user.id for item in admins if not item.user.is_bot)
+        except TelegramError:
+            logger.exception("Could not fetch admins for private report")
+        for uid, record in info.get("roles", {}).items():
+            if isinstance(record, dict) and record.get("role") in ("owner", "deputy", "admin"):
+                try:
+                    recipients.add(int(uid))
+                except (ValueError, TypeError):
+                    pass
+        delivered = 0
+        for recipient in recipients:
+            try:
+                await context.bot.send_message(chat_id=recipient, text=report)
+                delivered += 1
+            except TelegramError:
+                continue
+        log_action(chat_id, user, "إرسال بلاغ سري")
+        if delivered:
+            await message.reply_text(f"✅ وصل بلاغك سرياً إلى {delivered} من الإدارة.")
+        else:
+            await message.reply_text(
+                "✅ تم تسجيل البلاغ، لكن ما كدرت أوصله خاص للإدارة. "
+                "لازم المشرف يفتح محادثة البوت ويضغط /start حتى يستلم البلاغات."
+            )
+        return True
+
+    if key == "قوانين":
+        await message.reply_text(info.get("rules_text") or "📜 قوانين المجموعة لم يضفها المالك بعد.")
+        return True
+
+    if key.startswith("تعيين القوانين ") or key.startswith("تعديل القوانين "):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ تعديل القوانين خاص بمالك المجموعة.")
+            return True
+        rules = key.split(" ", 2)[2].strip()
+        if not rules:
+            await message.reply_text("اكتب القوانين بعد الأمر.")
+            return True
+        info["rules_text"] = "📜 قوانين المجموعة\n\n" + rules[:3500]
+        save_data()
+        log_action(chat_id, user, "تعديل قوانين المجموعة")
+        await message.reply_text("✅ تم تحديث قوانين المجموعة.")
+        return True
+
+    if key == "مسح القوانين":
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ مسح القوانين خاص بمالك المجموعة.")
+            return True
+        info["rules_text"] = ""
+        save_data()
+        log_action(chat_id, user, "مسح قوانين المجموعة")
+        await message.reply_text("✅ تم مسح القوانين المخصصة.")
+        return True
+
+    if key.startswith("تعيين ترحيب "):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ تخصيص الترحيب خاص بمالك المجموعة.")
+            return True
+        info["welcome_text"] = key.split(" ", 2)[2].strip()[:900]
+        save_data()
+        log_action(chat_id, user, "تعديل رسالة الترحيب")
+        await message.reply_text("✅ تم حفظ الترحيب. استخدم {name} للاسم و{username} لليوزر.")
+        return True
+
+    if key.startswith("كتم مؤقت ") or key.startswith("حظر مؤقت "):
+        is_ban = key.startswith("حظر مؤقت ")
+        label = "حظر مؤقت" if is_ban else "كتم مؤقت"
+        if not await require_permission(message, chat_id, user, "ban" if is_ban else "mute", context):
+            return True
+        parts = key.split()
+        seconds = parse_duration_seconds(parts[2] if len(parts) > 2 else "")
+        target = await reply_target(message)
+        if not target or seconds is None:
+            await message.reply_text(
+                f"رد على رسالة العضو واكتب: {label} 30m\n"
+                "المدد: 10s أو 30m أو 2h أو 1d (من 10 ثوانٍ إلى سنة)."
+            )
+            return True
+        try:
+            until = int(time.time()) + seconds
+            if is_ban:
+                await context.bot.ban_chat_member(chat_id, target.id, until_date=until)
+                info["banned"][str(target.id)] = {"name": target.full_name, "until": until, "temporary": True}
+            else:
+                await context.bot.restrict_chat_member(
+                    chat_id, target.id, permissions=ChatPermissions(can_send_messages=False),
+                    until_date=until, use_independent_chat_permissions=True,
+                )
+                info["muted"][str(target.id)] = {"name": target.full_name, "until": until, "temporary": True}
+            save_data()
+            log_action(chat_id, user, f"{label} لمدة {parts[2]}", target)
+            await message.reply_text(f"✅ تم {label} {target.full_name} لمدة {parts[2]}.")
+        except TelegramError:
+            logger.exception("Temporary moderation action failed")
+            await message.reply_text("❌ تعذر تنفيذ العقوبة. تأكد من صلاحيات البوت ورتبة العضو.")
+        return True
+
+    if key.startswith("جدولة رسالة "):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ جدولة الرسائل خاص بمالك المجموعة.")
+            return True
+        parts = key.split(" ", 3)
+        seconds = parse_duration_seconds(parts[2] if len(parts) > 2 else "")
+        body = parts[3].strip() if len(parts) > 3 else ""
+        if seconds is None or not body:
+            await message.reply_text("اكتب: جدولة رسالة 2h النص المراد إرساله.")
+            return True
+        items = info.setdefault("scheduled_messages", [])
+        next_id = max([int(item.get("id", 0)) for item in items] or [0]) + 1
+        due = int(time.time()) + seconds
+        items.append({"id": next_id, "due": due, "text": body[:3500], "created_by": user.id})
+        save_data()
+        log_action(chat_id, user, f"جدولة رسالة رقم {next_id}")
+        await message.reply_text(
+            f"✅ تمت جدولة الرسالة رقم {next_id}.\n"
+            f"🕒 {time.strftime('%Y-%m-%d %H:%M', time.localtime(due))}"
+        )
+        return True
+
+    if key == "الرسائل المجدولة":
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ عرض الرسائل المجدولة خاص بمالك المجموعة.")
+            return True
+        items = info.setdefault("scheduled_messages", [])
+        if not items:
+            await message.reply_text("📭 ماكو رسائل مجدولة حالياً.")
+        else:
+            rows = [
+                f"#{item.get('id')} — {time.strftime('%Y-%m-%d %H:%M', time.localtime(item.get('due', 0)))}\n{item.get('text', '')[:100]}"
+                for item in items[:30]
+            ]
+            await message.reply_text("🗓️ الرسائل المجدولة:\n\n" + "\n\n".join(rows))
+        return True
+
+    if key.startswith("الغاء رسالة مجدولة ") or key.startswith("إلغاء رسالة مجدولة "):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ إلغاء الرسائل المجدولة خاص بمالك المجموعة.")
+            return True
+        try:
+            item_id = int(key.split()[-1])
+        except (ValueError, IndexError):
+            await message.reply_text("اكتب: إلغاء رسالة مجدولة 1")
+            return True
+        items = info.setdefault("scheduled_messages", [])
+        before = len(items)
+        items[:] = [item for item in items if int(item.get("id", -1)) != item_id]
+        save_data()
+        if len(items) < before:
+            log_action(chat_id, user, f"إلغاء رسالة مجدولة رقم {item_id}")
+            await message.reply_text("✅ تم إلغاء الرسالة المجدولة.")
+        else:
+            await message.reply_text("ما لكيت رسالة بهذا الرقم.")
+        return True
+
+    if key == "تقرير الحماية":
+        if not await require_permission(message, chat_id, user, "stats", context):
+            return True
+        await message.reply_text(protection_report_text(chat_id))
+        return True
+
+    if key in ("تقرير حماية دوري تشغيل", "تقرير دوري تشغيل"):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ تفعيل التقرير الدوري خاص بمالك المجموعة.")
+            return True
+        info["protection_report_enabled"] = True
+        info["next_protection_report_at"] = int(time.time()) + 86400
+        save_data()
+        log_action(chat_id, user, "تفعيل تقرير الحماية الدوري")
+        await message.reply_text("✅ تم تفعيل التقرير اليومي، وأول تقرير بعد 24 ساعة.")
+        return True
+
+    if key in ("تقرير حماية دوري إيقاف", "تقرير دوري إيقاف"):
+        if not await is_group_owner(chat_id, user.id, context):
+            await message.reply_text("⛔ إيقاف التقرير الدوري خاص بمالك المجموعة.")
+            return True
+        info["protection_report_enabled"] = False
+        save_data()
+        log_action(chat_id, user, "إيقاف تقرير الحماية الدوري")
+        await message.reply_text("✅ تم إيقاف التقرير الدوري.")
+        return True
+
+    if key.startswith("استطلاع "):
+        if not await require_permission(message, chat_id, user, "report", context):
+            return True
+        pieces = [part.strip() for part in key[len("استطلاع "):].split("|") if part.strip()]
+        if len(pieces) < 3 or len(pieces) > 11:
+            await message.reply_text("اكتب: استطلاع السؤال | خيار 1 | خيار 2 (حتى 10 خيارات).")
+            return True
+        try:
+            await context.bot.send_poll(
+                chat_id=chat_id, question=pieces[0][:300],
+                options=[item[:100] for item in pieces[1:]], is_anonymous=False,
+            )
+            log_action(chat_id, user, "إنشاء استطلاع إداري")
+        except TelegramError:
+            await message.reply_text("❌ تعذر إنشاء الاستطلاع.")
+        return True
+
+    if key == "تصدير السجل":
+        if not await require_permission(message, chat_id, user, "logs", context):
+            return True
+        rows = ["التاريخ,المنفذ,العملية,الهدف,معرّف الهدف"]
+        for item in info.get("logs", []):
+            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(item.get("time", 0)))
+            fields = [when, item.get("actor", ""), item.get("action", ""), item.get("target", ""), str(item.get("target_id", ""))]
+            rows.append(",".join('"' + str(value).replace('"', '""') + '"' for value in fields))
+        try:
+            import io
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(io.BytesIO("\n".join(rows).encode("utf-8-sig")), filename=f"paradox_logs_{chat_id}.csv"),
+                caption="📤 سجل عمليات الإدارة لهذه المجموعة فقط.",
+            )
+            log_action(chat_id, user, "تصدير سجل الإدارة")
+        except TelegramError:
+            await message.reply_text("❌ تعذر إرسال ملف السجل.")
+        return True
+
+    return False
+
+
+async def scheduled_group_worker(application):
+    while True:
+        now = int(time.time())
+        for raw_chat_id in list(data.get("chats", {})):
+            try:
+                chat_id = int(raw_chat_id)
+                info = chat_data(chat_id)
+                due = [item for item in info.get("scheduled_messages", []) if int(item.get("due", now + 1)) <= now]
+                if due:
+                    due_ids = {int(item.get("id", -1)) for item in due}
+                    info["scheduled_messages"] = [item for item in info.get("scheduled_messages", []) if int(item.get("id", -2)) not in due_ids]
+                    save_data()
+                    for item in due:
+                        try:
+                            await application.bot.send_message(chat_id=chat_id, text=item.get("text", ""))
+                            log_action(chat_id, None, f"إرسال رسالة مجدولة رقم {item.get('id')}")
+                        except TelegramError:
+                            logger.exception("Scheduled message failed for %s", chat_id)
+                if info.get("protection_report_enabled", False) and int(info.get("next_protection_report_at", 0)) <= now:
+                    info["next_protection_report_at"] = now + 86400
+                    save_data()
+                    try:
+                        await application.bot.send_message(chat_id=chat_id, text=protection_report_text(chat_id))
+                        log_action(chat_id, None, "إرسال تقرير الحماية اليومي")
+                    except TelegramError:
+                        logger.exception("Daily protection report failed for %s", chat_id)
+            except Exception:
+                logger.exception("Scheduled worker failed for group %s", raw_chat_id)
+        await asyncio.sleep(30)
+
+
+async def start_background_tasks(application):
+    application.create_task(scheduled_group_worker(application))
+
+
+# =========================================================
 # GROUP TEXT COMMANDS
 # =========================================================
 
@@ -2733,6 +3066,9 @@ async def handle_group_text_commands(update, context):
         "فك كتم الجميع": "مسح المكتومين",
     }
     key = smart_aliases.get(smart_key, key)
+
+    if await handle_extra_group_features(message, chat.id, user, key, context):
+        return True
 
     # صياغات طبيعية لحذف عدد من الرسائل.
     natural_delete = re.fullmatch(
@@ -3339,10 +3675,14 @@ async def welcome_new_members(update, context):
                 )
             continue
         if welcome_enabled:
-            await message.reply_text(
-                f"أهلاً وسهلاً {member.first_name} 🌟\\n"
-                "نورت PARADOX 404!"
+            template = chat_data(chat.id).get(
+                "welcome_text", "أهلاً وسهلاً {name} 🌟\nنورت PARADOX 404!"
             )
+            rendered = (
+                template.replace("{name}", member.full_name)
+                .replace("{username}", "@" + member.username if member.username else "بدون يوزر")
+            )
+            await message.reply_text(rendered)
 
 
 async def unmute_all(update, context):
@@ -3894,7 +4234,7 @@ def main():
             "وهو رقم حساب مالك البوت الأساسي."
         )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(start_background_tasks).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(game_callback, pattern=r"^game:"))
