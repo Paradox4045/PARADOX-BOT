@@ -747,6 +747,27 @@ async def private_settings_text(update, context):
 
     command = " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
+    if command == "تصدير البيانات":
+        try:
+            with DATA_FILE.open("rb") as backup_file:
+                await context.bot.send_document(
+                    chat_id=user.id,
+                    document=InputFile(
+                        backup_file, filename="paradox_data_backup.json"
+                    ),
+                    caption=(
+                        "🛡️ نسخة احتياطية من بيانات PARADOX 404. "
+                        "احتفظ بهذا الملف حتى نكمل نقل التخزين الدائم."
+                    ),
+                )
+            await message.reply_text("✅ أرسلت النسخة الاحتياطية إلى محادثتك الخاصة.")
+        except FileNotFoundError:
+            await message.reply_text("ℹ️ ماكو ملف بيانات محفوظ حالياً.")
+        except TelegramError:
+            logger.exception("Could not export data backup")
+            await message.reply_text("❌ تعذر إرسال النسخة الاحتياطية.")
+        return
+
     if command == "تفعيل الاشتراك":
         if len(parts) < 3 or not parts[2].startswith("@"):
             await message.reply_text("اكتب هكذا:\nتفعيل الاشتراك @قناتك")
@@ -796,6 +817,46 @@ async def private_settings_text(update, context):
             "تعطيل الاشتراك\n"
             "حالة الاشتراك"
         )
+
+
+async def import_data_backup(update, context):
+    global data
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user or not is_bot_owner(user.id):
+        return
+    document = message.document
+    if not document or not (document.file_name or "").lower().endswith(".json"):
+        await message.reply_text("أرسل ملف النسخة الاحتياطية بصيغة JSON.")
+        return
+    try:
+        telegram_file = await context.bot.get_file(document.file_id)
+        raw = await telegram_file.download_as_bytearray()
+        candidate = json.loads(bytes(raw).decode("utf-8"))
+        if (
+            not isinstance(candidate, dict)
+            or not isinstance(candidate.get("chats"), dict)
+            or not isinstance(candidate.get("settings"), dict)
+        ):
+            raise ValueError("Invalid backup structure")
+        candidate["settings"].setdefault("force_channel", None)
+        candidate["settings"].setdefault("force_channel_url", None)
+        temp_path = DATA_FILE.with_suffix(".import.tmp")
+        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with temp_path.open("w", encoding="utf-8") as output:
+            json.dump(candidate, output, ensure_ascii=False, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp_path, DATA_FILE)
+        data = candidate
+        await message.reply_text(
+            "✅ تم استيراد النسخة الاحتياطية بنجاح وحفظ بيانات المجموعات."
+        )
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        await message.reply_text("❌ ملف النسخة الاحتياطية غير صالح.")
+    except Exception:
+        logger.exception("Data backup import failed")
+        await message.reply_text("❌ تعذر استيراد النسخة الاحتياطية.")
 
 
 # =========================================================
@@ -1877,6 +1938,11 @@ def main():
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
         private_settings_text,
+    ))
+
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.Document.ALL,
+        import_data_backup,
     ))
 
     app.add_handler(CommandHandler("addsong", add_song))
