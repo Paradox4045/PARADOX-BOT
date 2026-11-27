@@ -11,7 +11,6 @@ from collections import defaultdict, deque
 from urllib.parse import quote
 
 import requests
-import yt_dlp
 
 from telegram import (
     Update,
@@ -1466,7 +1465,10 @@ def ia_find_audio(query):
         safe_query = query.replace('"', " ").replace("\\", " ")
 
         search_params = [
-            ("q", f'mediatype:audio AND (title:"{safe_query}" OR creator:"{safe_query}")'),
+            (
+                "q",
+                f'mediatype:audio AND (title:"{safe_query}" OR creator:"{safe_query}")'
+            ),
             ("fl[]", "identifier"),
             ("fl[]", "title"),
             ("fl[]", "creator"),
@@ -1520,7 +1522,6 @@ def ia_find_audio(query):
                 continue
 
             files = metadata.get("files", [])
-
             mp3_files = []
 
             for file_info in files:
@@ -1632,75 +1633,7 @@ def ia_find_audio(query):
 
 
 # =========================================================
-# YOUTUBE SEARCH
-# =========================================================
-
-async def youtube_search_results(message, query):
-    def search():
-        options = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "extract_flat": True,
-            "ignoreerrors": True,
-        }
-
-        with yt_dlp.YoutubeDL(options) as ydl:
-            return ydl.extract_info(
-                f"ytsearch5:{query}",
-                download=False,
-            )
-
-    result = await asyncio.to_thread(search)
-    entries = (result or {}).get("entries") or []
-
-    if not entries:
-        await message.reply_text(
-            "❌ ما حصلت نتائج. جرّب اسم أغنية ثاني."
-        )
-        return
-
-    lines = ["🎵 نتائج البحث في YouTube:\n"]
-
-    for index, item in enumerate(entries, start=1):
-
-        if not item:
-            continue
-
-        title = item.get("title") or "بدون عنوان"
-        url = item.get("webpage_url") or item.get("url")
-        video_id = item.get("id")
-
-        if url and str(url).startswith("http"):
-            link = url
-
-        elif video_id:
-            link = (
-                "https://www.youtube.com/watch?v="
-                + video_id
-            )
-
-        else:
-            continue
-
-        lines.append(
-            f"{index}. {title}\n{link}\n"
-        )
-
-    if len(lines) == 1:
-        await message.reply_text(
-            "❌ ما حصلت نتائج صالحة."
-        )
-        return
-
-    await message.reply_text(
-        "\n".join(lines),
-        disable_web_page_preview=True,
-    )
-
-
-# =========================================================
-# COMPLETE SONG SEARCH
+# COMPLETE SONG SEARCH - AUDIO ONLY
 # =========================================================
 
 async def search_song(message, chat_id, query):
@@ -1723,7 +1656,6 @@ async def search_song(message, chat_id, query):
     ]
 
     if matches:
-
         song = matches[0]
 
         try:
@@ -1736,22 +1668,19 @@ async def search_song(message, chat_id, query):
                 ),
                 reply_to_message_id=message.message_id,
             )
-
             return
 
         except TelegramError:
-            logger.exception(
-                "Song library send failed"
-            )
+            logger.exception("Song library send failed")
 
     status_message = await message.reply_text(
         f"🔎 نيكسوس يبحث عن: {query}\n"
-        "جاري فحص التسجيلات الصوتية المتاحة..."
+        "🎵 جاري البحث عن ملف صوتي قابل للإرسال..."
     )
 
-    # ثانياً: البحث في Internet Archive
-    try:
+    result = None
 
+    try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 ia_find_audio,
@@ -1760,85 +1689,63 @@ async def search_song(message, chat_id, query):
             timeout=65,
         )
 
-        if result:
+        if not result:
+            await status_message.edit_text(
+                "❌ ما حصلت ملفاً صوتياً مناسباً ومتاحاً.\n\n"
+                "جرّب اسماً آخر، أو أضف الأغنية إلى مكتبة المجموعة.\n"
+                "ملاحظة: البحث يقتصر على التسجيلات التي تعلن "
+                "تراخيص تسمح بإعادة الاستخدام."
+            )
+            return
 
-            try:
-                with open(result["path"], "rb") as audio_file:
-
-                    await message.reply_audio(
-                        audio=InputFile(
-                            audio_file,
-                            filename="paradox_audio.mp3",
-                        ),
-                        title=str(result["title"])[:64],
-                        performer=str(result["creator"])[:64],
-                        caption=(
-                            f"🎵 {result['title']}\n"
-                            f"👤 الفنان/الرافع: {result['creator']}\n"
-                            f"📜 الترخيص المعلن: {result['license']}\n"
-                            f"🌐 المصدر: {result['page']}\n\n"
-                            "بواسطة PARADOX 404"
-                        ),
-                        reply_to_message_id=message.message_id,
-                    )
-
-                await status_message.delete()
-                return
-
-            except Exception:
-
-                logger.exception(
-                    "Could not send Archive audio"
-                )
-
-            finally:
-
-                if os.path.exists(result["path"]):
-                    try:
-                        os.remove(result["path"])
-                    except OSError:
-                        pass
-
-    except asyncio.TimeoutError:
-
-        logger.warning(
-            "Internet Archive search timed out"
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Internet Archive search error"
-        )
-
-    # ثالثاً: البحث في YouTube
-    try:
-
-        await status_message.edit_text(
-            "🔎 ما حصلت ملفاً صوتياً مناسباً.\n"
-            "دا أبحث عن نتائج أخرى..."
-        )
-
-        await youtube_search_results(
-            message,
-            query,
-        )
+        with open(result["path"], "rb") as audio_file:
+            await message.reply_audio(
+                audio=InputFile(
+                    audio_file,
+                    filename="PARADOX_404.mp3",
+                ),
+                title=str(result["title"])[:64],
+                performer=str(result["creator"])[:64],
+                caption=(
+                    f"🎵 {result['title']}\n"
+                    f"👤 الفنان/الرافع: {result['creator']}\n"
+                    f"📜 الترخيص المعلن: {result['license']}\n"
+                    f"🌐 المصدر: {result['page']}\n\n"
+                    "🔥 PARADOX 404"
+                ),
+                reply_to_message_id=message.message_id,
+            )
 
         await status_message.delete()
 
-    except Exception:
+    except asyncio.TimeoutError:
+        logger.warning("Internet Archive search timed out")
 
-        logger.exception(
-            "YouTube search failed"
+        await status_message.edit_text(
+            "⏳ البحث أخذ وقتاً طويلاً.\n"
+            "جرّب مرة ثانية بعد قليل."
         )
+
+    except Exception:
+        logger.exception("Audio search or sending failed")
 
         try:
             await status_message.edit_text(
-                "⚠️ تعذر البحث حالياً. "
-                "جرّب مرة ثانية بعد قليل."
+                "⚠️ تعذر تحميل أو إرسال الملف الصوتي حالياً.\n"
+                "حاول مرة ثانية بعد قليل."
             )
         except TelegramError:
             pass
+
+    finally:
+        if result and result.get("path"):
+            if os.path.exists(result["path"]):
+                try:
+                    os.remove(result["path"])
+                except OSError:
+                    logger.exception(
+                        "Temporary audio cleanup failed"
+                    )
 
 
 # =========================================================
