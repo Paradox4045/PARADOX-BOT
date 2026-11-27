@@ -397,8 +397,7 @@ async def is_group_owner(chat_id, user_id, context):
     return bool(member and member.status == "creator")
 
 
-async def is_admin(chat_id, user_id, context):
-    member = await get_member(chat_id, user_id, context)
+async def is_admin(chat_id, user_id, context):    member = await get_member(chat_id, user_id, context)
     return bool(member and member.status in ("administrator", "creator"))
 
 
@@ -797,8 +796,7 @@ async def private_settings_text(update, context):
     if command == "تصدير البيانات":
         try:
             with DATA_FILE.open("rb") as backup_file:
-                await context.bot.send_document(
-                    chat_id=user.id,
+                await context.bot.send_document(                    chat_id=user.id,
                     document=InputFile(
                         backup_file, filename="paradox_data_backup.json"
                     ),
@@ -1196,7 +1194,6 @@ async def admin_action(update, context, action):
         await message.reply_text(
             "❌ تعذر تنفيذ الأمر. تأكد من صلاحيات البوت ورتبة العضو."
         )
-
 
 # =========================================================
 # LOCKS
@@ -1597,8 +1594,7 @@ async def handle_group_text_commands(update, context):
         # أوامر السبام صريحة وثابتة: التفعيل يشغّل الحماية،
         # والإيقاف/التعطيل يوقفانها.
         "تفعيل السبام": "قفل السبام", "تفعيل حماية السبام": "قفل السبام",
-        "تشغيل السبام": "قفل السبام", "تشغيل حماية السبام": "قفل السبام",
-        "شغل السبام": "قفل السبام", "شغل حماية السبام": "قفل السبام",
+        "تشغيل السبام": "قفل السبام", "تشغيل حماية السبام": "قفل السبام",        "شغل السبام": "قفل السبام", "شغل حماية السبام": "قفل السبام",
         "فعل حماية السبام": "قفل السبام", "فعل السبام": "قفل السبام",
         "رجع حماية السبام": "قفل السبام",
         "إيقاف السبام": "فتح السبام", "ايقاف السبام": "فتح السبام",
@@ -1876,8 +1872,7 @@ async def nexus_ai_reply(message, chat_id, user, text):
                     "وليس هويتك أو اسم شخصيتك. عرّف نفسك دائماً باسم نيكسوس، وعندما يسألك أحد "
                     "من أنت فقل: أنا نيكسوس. لا تقل إنك PARADOX 404 ولا تقدّم نفسك باسم المشروع، "
                     "ولا تخلط بين اسمك واسم البوت حتى لو ظهر اسم PARADOX 404 في سياق المحادثة. "
-                    "تحدث بالعربية العراقية بشكل طبيعي وودود وبشخصية واضحة وثابتة، واختصر دون "
-                    "أن تكون آلياً أو رسمياً. افهم سياق المجموعة والرسائل السابقة وتذكر ما قيل "
+                    "تحدث بالعربية العراقية بشكل طبيعي وودود وبشخصية واضحة وثابتة. اجعل ردودك قصيرة جداً: أجب مباشرة بجملة واحدة أو جملتين غالباً، وبحد أقصى نحو 35 كلمة إلا إذا طلب العضو شرحاً مفصلاً. لا تستخدم مقدمات طويلة أو عبارات ترحيب متكررة أو إعادة صياغة السؤال أو حشواً أو قوائم إلا عند الحاجة. إذا كان السؤال بسيطاً فأجب ببساطة وعلى قدره، ولا توسّع الموضوع من نفسك أو تسأل أسئلة إضافية غير ضرورية. توسّع فقط عندما يطلب العضو ذلك صراحةً. افهم سياق المجموعة والرسائل السابقة وتذكر ما قيل "
                     "ضمن الذاكرة المتاحة. لا تدّعِ أنك نفذت إجراءً إدارياً بنفسك؛ أوامر الحماية "
                     "والكتم والحظر والصلاحيات تنفذها وظائف البوت الحالية فقط. إذا طلب المستخدم "
                     "إجراءً إدارياً، وجّهه إلى صيغة الأمر المدعومة أو اطلب منه استخدام الأمر "
@@ -1888,7 +1883,7 @@ async def nexus_ai_reply(message, chat_id, user, text):
         "contents": contents,
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 700,
+            "maxOutputTokens": 220,
         },
     }
 
@@ -1997,7 +1992,6 @@ async def moderate(update, context):
         or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
     ):
         return
-
     if user.is_bot:
         return
 
@@ -2397,8 +2391,7 @@ async def game_callback(update, context):
             return
         if not 0 <= choice < int(state.get("options_count", 0)):
             await query.answer("هذا الاختيار غير موجود.", show_alert=True)
-            return
-        if choice == int(state.get("answer", -1)):
+            return        if choice == int(state.get("answer", -1)):
             game_score(chat_id, user, 2)
             chat_data(chat_id)["game_state"] = None
             save_data()
