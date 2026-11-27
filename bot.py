@@ -498,7 +498,6 @@ async def send_subscription_gate(message):
         reply_markup=force_keyboard(),
     )
 
-
 # =========================================================
 # MENUS
 # =========================================================
@@ -997,8 +996,7 @@ async def admin_action(update, context, action):
         except TelegramError:
             await message.reply_text(
                 "❌ تعذر حذف الرسالة. افحص صلاحية البوت."
-            )
-        return
+            )        return
 
     if action in ("pin", "unpin"):
         if not message.reply_to_message:
@@ -1497,8 +1495,7 @@ async def handle_group_text_commands(update, context):
         if not await is_group_owner(chat.id, user.id, context):
             await message.reply_text("⛔ تشغيل الذكاء وإيقافه من صلاحية مالك المجموعة فقط.")
             return True
-        chat_data(chat.id)["nexus_ai_enabled"] = True
-        save_data()
+        chat_data(chat.id)["nexus_ai_enabled"] = True        save_data()
         await message.reply_text("✅ تم تشغيل ذكاء نيكسوس. تگدر تناديه هسه.")
         return True
     if ai_control in ("تعطيل الذكاء", "ايقاف الذكاء", "وقف الذكاء"):
@@ -1584,15 +1581,21 @@ async def handle_group_text_commands(update, context):
         "امنع الملصقات": "قفل الملصقات", "اسمح بالملصقات": "فتح الملصقات",
         "امنع الصوتيات": "قفل الرسائل الصوتية", "امنع الصوت": "قفل الرسائل الصوتية",
         "اسمح بالصوتيات": "فتح الرسائل الصوتية", "اسمح بالصوت": "فتح الرسائل الصوتية",
-        # صياغات طبيعية للتحكم بالحماية: إيقاف السبام يعطّل الفلتر،
-        # وتشغيل حماية السبام يفعّله.
-        "اقفل السبام": "فتح السبام", "اقفل حماية السبام": "فتح السبام",
-        "وقف السبام": "فتح السبام", "اوقف السبام": "فتح السبام",
-        "عطل السبام": "فتح السبام", "طفي السبام": "فتح السبام",
-        "افتح السبام": "فتح السبام", "اسمح بالسبام": "فتح السبام",
+        # أوامر السبام صريحة وثابتة: التفعيل يشغّل الحماية،
+        # والإيقاف/التعطيل يوقفانها.
+        "تفعيل السبام": "قفل السبام", "تفعيل حماية السبام": "قفل السبام",
+        "تشغيل السبام": "قفل السبام", "تشغيل حماية السبام": "قفل السبام",
         "شغل السبام": "قفل السبام", "شغل حماية السبام": "قفل السبام",
         "فعل حماية السبام": "قفل السبام", "فعل السبام": "قفل السبام",
-        "رجع حماية السبام": "قفل السبام", "افتح حماية السبام": "قفل السبام",
+        "رجع حماية السبام": "قفل السبام",
+        "إيقاف السبام": "فتح السبام", "ايقاف السبام": "فتح السبام",
+        "إيقاف حماية السبام": "فتح السبام", "ايقاف حماية السبام": "فتح السبام",
+        "تعطيل السبام": "فتح السبام", "تعطيل حماية السبام": "فتح السبام",
+        "وقف السبام": "فتح السبام", "اوقف السبام": "فتح السبام",
+        "عطل السبام": "فتح السبام", "طفي السبام": "فتح السبام",
+        "اقفل السبام": "قفل السبام", "اقفل حماية السبام": "قفل السبام",
+        "افتح السبام": "فتح السبام", "اسمح بالسبام": "فتح السبام",
+        "افتح حماية السبام": "قفل السبام",
         "وقف الترحيب": "إيقاف الترحيب", "عطل الترحيب": "إيقاف الترحيب",
         "رجع الترحيب": "تفعيل الترحيب", "شغل الترحيب": "تفعيل الترحيب",
         # إدارة الأعضاء
@@ -1997,249 +2000,3 @@ async def moderate(update, context):
 
     track_group_message(message)
     await count_activity(chat.id, user)
-
-    if await handle_group_text_commands(update, context):
-        return
-
-    # الرد الترحيبي التلقائي عند ذكر اسم نيكسوس متوقف.
-    # تبقى أوامر NEXUS CORE ومعالجة بقية رسائل المجموعة فعالة.
-
-    song_match = SONG_PATTERN.match(text)
-    if song_match:
-        await search_song(message, chat.id, song_match.group(1))
-        return
-
-    if await is_admin(chat.id, user.id, context):
-        await nexus_ai_reply(message, chat.id, user, text)
-        return
-
-    locks = chat_data(chat.id)["locks"]
-    blocked = None
-
-    if locks.get("photos") and message.photo:
-        blocked = "إرسال الصور مقفول"
-    elif locks.get("videos") and (message.video or message.animation):
-        blocked = "إرسال الفيديو مقفول"
-    elif locks.get("files") and message.document:
-        blocked = "إرسال الملفات مقفول"
-    elif locks.get("stickers") and message.sticker:
-        blocked = "إرسال الملصقات مقفول"
-    elif locks.get("voice") and (
-        message.voice or message.audio or message.video_note
-    ):
-        blocked = "إرسال الصوتيات مقفول"
-    elif locks.get("polls") and message.poll:
-        blocked = "الاستطلاعات مقفولة"
-    elif locks.get("forwards") and getattr(message, "forward_origin", None):
-        blocked = "إعادة التوجيه مقفولة"
-
-    if blocked:
-        try:
-            await message.delete()
-        except TelegramError:
-            logger.exception("Locked media delete failed")
-        await message.reply_text(f"🔒 {blocked}.")
-        return
-
-    if locks.get("links", True) and contains_message_link(message, text):
-        try:
-            await message.delete()
-        except TelegramError:
-            logger.exception("Could not delete locked link")
-        await issue_warning(
-            message, chat.id, user, context, "نشر رابط"
-        )
-        return
-
-    if locks.get("mentions"):
-        mentions = len(re.findall(r"@\w+", text))
-        if mentions >= 5:
-            try:
-                await message.delete()
-            except TelegramError:
-                logger.exception("Mention spam delete failed")
-            await issue_warning(
-                message, chat.id, user, context, "منشنات جماعية"
-            )
-            return
-
-    if contains_bad_word(text):
-        try:
-            await message.delete()
-        except TelegramError:
-            logger.exception("Could not delete abusive message")
-        await issue_warning(
-            message, chat.id, user, context, "لفظ مسيء"
-        )
-        return
-
-    # الحماية الذكية: كشف الرسائل المتطابقة والمتشابهة
-    if locks.get("spam", True) and text:
-        if is_duplicate_message(chat.id, user.id, text):
-            try:
-                await message.delete()
-            except TelegramError:
-                logger.exception("Duplicate message delete failed")
-            await issue_warning(
-                message,
-                chat.id,
-                user,
-                context,
-                "تكرار أو تشابه الرسائل",
-            )
-            return
-
-    # كشف الإغراق: 5 رسائل خلال 6 ثوانٍ، منها 4 خلال آخر 3 ثوانٍ.
-    if locks.get("spam", True):
-        key = (chat.id, user.id)
-        now = time.time()
-        queue = spam_tracker[key]
-        queue.append(now)
-
-        while queue and now - queue[0] > SPAM_WINDOW_SECONDS:
-            queue.popleft()
-
-        burst_count = sum(
-            1 for sent_at in queue
-            if now - sent_at <= SPAM_BURST_SECONDS
-        )
-
-        if (
-            len(queue) >= SPAM_MESSAGE_LIMIT
-            and burst_count >= SPAM_BURST_LIMIT
-        ):
-            queue.clear()
-            try:
-                await message.delete()
-            except TelegramError:
-                logger.exception("Flood message delete failed")
-            await issue_warning(
-                message, chat.id, user, context, "إغراق سريع بالرسائل"
-            )
-            return
-
-    # بعد اجتياز فحوص الحماية، يسمح لنيكسوس بالرد عند مناداته فقط.
-    await nexus_ai_reply(message, chat.id, user, text)
-
-
-# =========================================================
-# DELEGATED UNMUTE
-# =========================================================
-
-async def grant_unmute(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or not user:
-        return
-    if not await is_group_owner(chat.id, user.id, context):
-        await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
-        return
-    target = await reply_target(message)
-    if not target:
-        await message.reply_text(
-            "رد على رسالة المشرف واكتب /grantunmute."
-        )
-        return
-    if not await is_admin(chat.id, target.id, context):
-        await message.reply_text(
-            "⚠️ الشخص لازم يكون مشرفاً بالمجموعة."
-        )
-        return
-    info = chat_data(chat.id)
-    if str(target.id) not in info["delegates"]:
-        info["delegates"].append(str(target.id))
-    save_data()
-    await message.reply_text(
-        f"✅ مُنح {target.first_name} صلاحية فك الكتم."
-    )
-    log_action(chat.id, user, "منح صلاحية فك الكتم", target)
-
-
-async def revoke_unmute(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or not user:
-        return
-    if not await is_group_owner(chat.id, user.id, context):
-        await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
-        return
-    target = await reply_target(message)
-    if not target:
-        await message.reply_text(
-            "رد على رسالة المشرف واكتب /revokeunmute."
-        )
-        return
-    info = chat_data(chat.id)
-    info["delegates"] = [
-        item for item in info["delegates"] if item != str(target.id)
-    ]
-    save_data()
-    await message.reply_text(
-        f"✅ سُحبت صلاحية فك الكتم من {target.first_name}."
-    )
-    log_action(chat.id, user, "سحب صلاحية فك الكتم", target)
-
-
-# =========================================================
-# STARTUP
-# =========================================================
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN غير موجود في متغيرات Railway."
-        )
-    if not BOT_OWNER_ID or not BOT_OWNER_ID.isdigit():
-        raise RuntimeError(
-            "أضف BOT_OWNER_ID في Railway Variables، "
-            "وهو رقم حساب مالك البوت الأساسي."
-        )
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(menu_callback))
-
-    app.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-        private_settings_text,
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & filters.Document.ALL,
-        import_data_backup,
-    ))
-
-    app.add_handler(CommandHandler("grantunmute", grant_unmute))
-    app.add_handler(CommandHandler("revokeunmute", revoke_unmute))
-
-    app.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
-        welcome_new_members,
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & (
-            filters.TEXT
-            | filters.CAPTION
-            | filters.PHOTO
-            | filters.VIDEO
-            | filters.ANIMATION
-            | filters.Document.ALL
-            | filters.Sticker.ALL
-            | filters.VOICE
-            | filters.AUDIO
-            | filters.VIDEO_NOTE
-            | filters.POLL
-        ),
-        moderate,
-    ))
-
-    logger.info("PARADOX 404 is starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
