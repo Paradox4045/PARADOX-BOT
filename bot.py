@@ -1064,7 +1064,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await query.answer("معرّف مجموعة غير صحيح.", show_alert=True)
             return
-        if not can_manage_panel(chat_id, user.id, context):
+        if not await can_manage_panel(chat_id, user.id, context):
             await query.answer("ما عندك صلاحية إدارة رتب هذه المجموعة.", show_alert=True)
             return
         await query.answer()
@@ -1085,7 +1085,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.answer()
         await query.edit_message_text(
-            "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
+            "🛡️ الإدارة والحماية\nاختار قسم الإدارة والحماية:",
             reply_markup=management_keyboard(chat_id),
         )
         return
