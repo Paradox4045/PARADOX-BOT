@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -5,6 +6,8 @@ import time
 import asyncio
 import logging
 import tempfile
+import difflib
+import unicodedata
 from pathlib import Path
 from collections import defaultdict, deque
 from urllib.parse import quote
@@ -39,6 +42,13 @@ DATA_FILE = Path(os.getenv("DATA_FILE", "paradox_data.json"))
 WARN_LIMIT = 4
 SPAM_WINDOW_SECONDS = 10
 SPAM_MESSAGE_LIMIT = 6
+
+# الحماية من الرسائل المتشابهة
+DUPLICATE_WINDOW_SECONDS = 25
+DUPLICATE_SIMILARITY_LIMIT = 0.88
+DUPLICATE_MIN_LENGTH = 12
+DUPLICATE_HISTORY_LIMIT = 12
+
 DELETE_MAX_MESSAGES = 1000
 DELETE_TRACK_LIMIT = 3000
 DELETE_MAX_AGE = 48 * 60 * 60
@@ -81,11 +91,73 @@ DEFAULT_DATA = {
 }
 
 spam_tracker = defaultdict(deque)
+duplicate_tracker = defaultdict(deque)
 
-# يحتفظ بمعرّفات الرسائل التي يشاهدها البوت أثناء عمله
 group_message_history = defaultdict(
     lambda: deque(maxlen=DELETE_TRACK_LIMIT)
 )
+
+
+# =========================================================
+# SMART TEXT PROTECTION
+# =========================================================
+
+def normalize_message(text):
+    """تنظيف النص حتى نكشف التشابه رغم اختلاف الرموز والتشكيل."""
+    text = (text or "").lower()
+    text = unicodedata.normalize("NFKC", text)
+
+    cleaned = []
+    for char in text:
+        category = unicodedata.category(char)
+        if category.startswith("M"):
+            continue
+        if char in "ـ":
+            continue
+        if category.startswith("P") or category.startswith("S"):
+            cleaned.append(" ")
+        else:
+            cleaned.append(char)
+
+    text = "".join(cleaned)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def is_duplicate_message(chat_id, user_id, text):
+    """يكشف تكرار أو تشابه رسائل العضو خلال فترة قصيرة."""
+    normalized = normalize_message(text)
+
+    if len(normalized) < DUPLICATE_MIN_LENGTH:
+        return False
+
+    key = (chat_id, user_id)
+    now = time.time()
+    history = duplicate_tracker[key]
+
+    while history and now - history[0][0] > DUPLICATE_WINDOW_SECONDS:
+        history.popleft()
+
+    duplicate_found = False
+
+    for old_time, old_text in history:
+        if len(old_text) < DUPLICATE_MIN_LENGTH:
+            continue
+
+        similarity = difflib.SequenceMatcher(
+            None, normalized, old_text
+        ).ratio()
+
+        if similarity >= DUPLICATE_SIMILARITY_LIMIT:
+            duplicate_found = True
+            break
+
+    history.append((now, normalized))
+
+    while len(history) > DUPLICATE_HISTORY_LIMIT:
+        history.popleft()
+
+    return duplicate_found
 
 
 # =========================================================
@@ -134,6 +206,7 @@ def chat_data(chat_id):
     info.setdefault("activity", {})
     info.setdefault("locks", {})
     info["locks"].setdefault("links", True)
+    info["locks"].setdefault("spam", True)
     info.setdefault("admin_permissions", {})
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
@@ -163,14 +236,12 @@ def log_action(chat_id, actor, action, target=None):
 # =========================================================
 
 def track_group_message(message):
-    """يسجل الرسائل الجديدة التي يشاهدها البوت."""
     if not message or not message.chat:
         return
     if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
 
-    history = group_message_history[message.chat.id]
-    history.append({
+    group_message_history[message.chat.id].append({
         "id": message.message_id,
         "date": message.date.timestamp(),
     })
@@ -209,7 +280,6 @@ async def delete_recent_messages(message, chat_id, actor, amount, context):
     now = time.time()
     history = group_message_history[chat_id]
 
-    # استبعاد أمر الحذف نفسه والرسائل الأقدم من 48 ساعة
     candidates = [
         item for item in reversed(history)
         if item["id"] != message.message_id
@@ -241,7 +311,6 @@ async def delete_recent_messages(message, chat_id, actor, amount, context):
             maxlen=DELETE_TRACK_LIMIT,
         )
 
-    # حذف رسالة الأمر بعد انتهاء العملية
     try:
         await message.delete()
     except TelegramError:
@@ -564,6 +633,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "قفل السبام / فتح السبام\n"
             "قفل المنشنات / فتح المنشنات\n\n"
             "الحماية التلقائية: حذف الروابط والألفاظ، "
+            "وكشف الرسائل المتشابهة والإغراق، "
             "وإنذار ثم كتم بعد 4 إنذارات.",
             reply_markup=back_keyboard(),
         )
@@ -1336,7 +1406,6 @@ async def handle_group_text_commands(update, context):
     text = (message.text or "").strip()
     key = re.sub(r"\s+", " ", text).strip().lower()
 
-    # أمر حذف عدد محدد من الرسائل: حذف 100 / حذف 50
     delete_match = re.fullmatch(r"حذف\s+(\d+)", key)
     if delete_match:
         await delete_recent_messages(
@@ -1568,9 +1637,7 @@ async def moderate(update, context):
     if user.is_bot:
         return
 
-    # تسجيل الرسالة حتى يمكن حذفها لاحقاً بأمر حذف 100
     track_group_message(message)
-
     await count_activity(chat.id, user)
 
     if await handle_group_text_commands(update, context):
@@ -1650,19 +1717,38 @@ async def moderate(update, context):
         )
         return
 
+    # الحماية الذكية: كشف الرسائل المتطابقة والمتشابهة
+    if locks.get("spam", True) and text:
+        if is_duplicate_message(chat.id, user.id, text):
+            try:
+                await message.delete()
+            except TelegramError:
+                logger.exception("Duplicate message delete failed")
+            await issue_warning(
+                message,
+                chat.id,
+                user,
+                context,
+                "تكرار أو تشابه الرسائل",
+            )
+            return
+
+    # كشف الإغراق بالرسائل
     if locks.get("spam", True):
         key = (chat.id, user.id)
         now = time.time()
         queue = spam_tracker[key]
         queue.append(now)
+
         while queue and now - queue[0] > SPAM_WINDOW_SECONDS:
             queue.popleft()
+
         if len(queue) >= SPAM_MESSAGE_LIMIT:
             queue.clear()
             try:
                 await message.delete()
             except TelegramError:
-                pass
+                logger.exception("Flood message delete failed")
             await issue_warning(
                 message, chat.id, user, context, "إغراق الرسائل"
             )
