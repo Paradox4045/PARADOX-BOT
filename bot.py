@@ -2735,7 +2735,7 @@ def download_archive_audio(query, output_dir):
     return None
 
 
-def download_permitted_youtube_mp3(query, output_dir):
+def download_youtube_cc_mp3(query, output_dir):
     """
     Download only videos explicitly marked with a Creative Commons license.
     Convert the permitted audio to MP3 using the bundled imageio-ffmpeg binary.
@@ -2800,15 +2800,92 @@ def download_permitted_youtube_mp3(query, output_dir):
                 "license": info.get("license") or "Creative Commons",
             }
 
-    # Fallback: search a second source for openly licensed audio.
-    try:
-        archive_result = download_archive_audio(query, output_dir)
-        if archive_result:
-            return archive_result
-    except Exception:
-        logger.exception("Internet Archive audio search failed")
-
     return None
+
+
+def download_wikimedia_audio(query, output_dir):
+    """Search Wikimedia Commons and download only openly licensed audio."""
+    api = "https://commons.wikimedia.org/w/api.php"
+    headers = {"User-Agent": "PARADOX-404-NEXUS/1.0 (audio search)"}
+    response = requests.get(api, params={
+        "action": "query",
+        "generator": "search",
+        "gsrsearch": f'filetype:audio "{query}"',
+        "gsrnamespace": 6,
+        "gsrlimit": 10,
+        "prop": "imageinfo",
+        "iiprop": "url|extmetadata",
+        "iiurlwidth": 0,
+        "format": "json",
+    }, headers=headers, timeout=20)
+    response.raise_for_status()
+    pages = (response.json().get("query") or {}).get("pages") or {}
+    for page in pages.values():
+        info = (page.get("imageinfo") or [{}])[0]
+        meta = info.get("extmetadata") or {}
+        license_name = str((meta.get("LicenseShortName") or {}).get("value") or "").strip()
+        license_url = str((meta.get("LicenseUrl") or {}).get("value") or "").strip()
+        license_lower = (license_name + " " + license_url).lower()
+        permitted = any(token in license_lower for token in (
+            "cc by", "cc-by", "cc0", "public domain", "public-domain",
+            "creativecommons.org/licenses/by", "creativecommons.org/publicdomain",
+        ))
+        if not permitted:
+            continue
+        file_url = info.get("url")
+        if not file_url:
+            continue
+        ext = Path(str(page.get("title") or "")).suffix.lower()
+        if ext not in (".mp3", ".ogg", ".oga", ".wav", ".flac", ".m4a"):
+            continue
+        target = Path(output_dir) / ("commons_audio" + ext)
+        with requests.get(file_url, headers=headers, timeout=(20, 90), stream=True) as audio:
+            audio.raise_for_status()
+            content_type = audio.headers.get("Content-Type", "").lower()
+            if "text/html" in content_type:
+                continue
+            total = 0
+            with target.open("wb") as output:
+                for chunk in audio.iter_content(chunk_size=256 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > 49 * 1024 * 1024:
+                        output.close()
+                        target.unlink(missing_ok=True)
+                        break
+                    output.write(chunk)
+            if target.is_file() and target.stat().st_size:
+                return {
+                    "path": str(target),
+                    "title": str(page.get("title") or query).replace("File:", "")[:64],
+                    "uploader": "Wikimedia Commons",
+                    "license": license_name or license_url,
+                }
+    return None
+
+
+def download_permitted_youtube_mp3(query, output_dir):
+    """
+    Multi-source search: YouTube (Creative Commons only), Internet Archive,
+    then Wikimedia Commons. A failure in one provider never blocks the others.
+    """
+    providers = (
+        ("YouTube", lambda: download_youtube_cc_mp3(query, output_dir)),
+        ("Internet Archive", lambda: download_archive_audio(query, output_dir)),
+        ("Wikimedia Commons", lambda: download_wikimedia_audio(query, output_dir)),
+    )
+    for provider_name, provider in providers:
+        try:
+            result = provider()
+            if result:
+                result.setdefault("source", provider_name)
+                return result
+        except Exception:
+            logger.exception("%s audio provider failed; trying next source", provider_name)
+    return None
+
+
 
 
 async def search_song(message, chat_id, query):
@@ -2818,7 +2895,7 @@ async def search_song(message, chat_id, query):
         return
 
     status_message = await message.reply_text(
-        f"🔎 نيكسوس يبحث عن صوتيات مرخّصة للتنزيل: {query}"
+        f"🔎 نيكسوس يبحث بالأكثر من مصدر: {query}"
     )
     work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
     try:
@@ -2828,8 +2905,7 @@ async def search_song(message, chat_id, query):
         )
         if not result:
             await status_message.edit_text(
-                "ما حصلت نتيجة موثّقة بترخيص Creative Commons ضمن نتائج البحث. "
-                "حتى نحافظ على حقوق أصحاب المحتوى، ما راح أنزّل صوتيات غير مصرّح بتنزيلها."
+                "ما حصلت ملفاً صوتياً متاحاً للتنزيل من المصادر المفتوحة حالياً. جرّب اسم الأغنية أو اسم الفنان."
             )
             return
 
@@ -2845,7 +2921,7 @@ async def search_song(message, chat_id, query):
                 audio=audio_file,
                 title=result["title"],
                 performer=result["uploader"] or "NEXUS",
-                caption="🎵 تم إرسال الملف بصيغة MP3",
+                caption=f"🎵 تم إرسال الملف من {result.get('source', 'مصدر مفتوح')} — {result.get('license', 'ترخيص متاح')}",
             )
         await status_message.delete()
 
