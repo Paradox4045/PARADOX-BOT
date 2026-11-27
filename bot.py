@@ -784,25 +784,6 @@ async def private_settings_text(update, context):
 
     command = " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
-    if command == "تفعيل اليوتيوب":
-        data["settings"]["youtube_enabled"] = True
-        save_data()
-        await message.reply_text("✅ تم تفعيل اليوتيوب.")
-        return
-
-    if command == "تعطيل اليوتيوب":
-        data["settings"]["youtube_enabled"] = False
-        save_data()
-        await message.reply_text("🔴 تم تعطيل اليوتيوب. رسائل يوت ستُتجاهل بصمت.")
-        return
-
-    if command == "حالة اليوتيوب":
-        enabled = data["settings"].get("youtube_enabled", True)
-        await message.reply_text(
-            "🟢 اليوتيوب مفعّل." if enabled else "🔴 اليوتيوب متوقف."
-        )
-        return
-
     if command == "تصدير البيانات":
         try:
             with DATA_FILE.open("rb") as backup_file:
@@ -1471,6 +1452,34 @@ async def handle_group_text_commands(update, context):
         or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
     ):
         return False
+
+    # تحكم مالك البوت الأساسي باليوتيوب من داخل المجموعة فقط.
+    youtube_control = normalize_message(message.text or "")
+    if youtube_control in ("تفعيل اليوتيوب", "تشغيل اليوتيوب"):
+        if not is_bot_owner(user.id):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
+            return True
+        data["settings"]["youtube_enabled"] = True
+        save_data()
+        await message.reply_text("✅ تم تفعيل اليوتيوب.")
+        return True
+    if youtube_control in ("تعطيل اليوتيوب", "ايقاف اليوتيوب", "وقف اليوتيوب"):
+        if not is_bot_owner(user.id):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
+            return True
+        data["settings"]["youtube_enabled"] = False
+        save_data()
+        await message.reply_text("🔴 تم تعطيل اليوتيوب. رسائل يوت ستُتجاهل بصمت.")
+        return True
+    if youtube_control == "حالة اليوتيوب":
+        if not is_bot_owner(user.id):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
+            return True
+        enabled = data["settings"].get("youtube_enabled", True)
+        await message.reply_text(
+            "🟢 اليوتيوب مفعّل." if enabled else "🔴 اليوتيوب متوقف."
+        )
+        return True
 
     # الحسابات التي أوقف المالك تواصل نيكسوس معها لا تنفذ أوامر نيكسوس أيضاً.
     if (
