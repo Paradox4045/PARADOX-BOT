@@ -2294,6 +2294,20 @@ async def handle_game_text(message, chat_id, user, text):
         points = info["game_scores"].get(str(user.id), {}).get("points", 0)
         await message.reply_text(f"⭐ {user.first_name}، عندك {points} نقطة.")
         return True
+    # أمر إيقاف اللعبة: متاح لمالك المجموعة والمشرفين فقط.
+    if normalized == "ايقاف اللعبة":
+        state = info.get("game_state")
+        if not state:
+            await message.reply_text("🎮 ماكو لعبة فعّالة حتى أوقفها.")
+            return True
+        if not await is_admin(chat_id, user.id, context):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة والمشرفين.")
+            return True
+        info["game_state"] = None
+        save_data()
+        await message.reply_text("🛑 تم إيقاف اللعبة الحالية. تگدرون تبدؤون لعبة جديدة هسه.")
+        return True
+
     state = info.get("game_state")
     if not state:
         return False
