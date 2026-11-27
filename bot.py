@@ -4157,12 +4157,15 @@ async def moderate(update, context):
 
     text = message.text or message.caption or ""
 
-    # إذا كانت ميزة يوتيوب متوقفة، نتجاهل أي رسالة تبدأ بأمر يوت بصمت
-    # قبل تسجيل النشاط أو تشغيل أي معالجة أخرى.
+    # إذا كانت ميزة البحث متوقفة، نوضح ذلك للعضو بدلاً من تجاهل الأمر بصمت.
     if (
         re.match(r"^\s*يوت(?:\s|$)", text, re.I)
         and not chat_data(chat.id).get("youtube_enabled", True)
     ):
+        await message.reply_text(
+            "🔴 البحث عن الأغاني متوقف بهذه المجموعة. "
+            "مالك المجموعة يگدر يفعّله بكتابة: تفعيل اليوتيوب"
+        )
         return
 
     track_group_message(message)
