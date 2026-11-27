@@ -2800,14 +2800,6 @@ def download_youtube_cc_mp3(query, output_dir):
                 "license": info.get("license") or "Creative Commons",
             }
 
-    # Fallback: search a second source for openly licensed audio.
-    try:
-        archive_result = download_archive_audio(query, output_dir)
-        if archive_result:
-            return archive_result
-    except Exception:
-        logger.exception("Internet Archive audio search failed")
-
     return None
 
 
