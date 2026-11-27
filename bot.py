@@ -2207,8 +2207,13 @@ def game_leaderboard(chat_id):
 
 async def start_game(chat_id, message, game):
     info = chat_data(chat_id)
-    if info.get("game_state"):
-        await message.reply_text("🎮 أكو لعبة شغالة حالياً! خلّصوها أولاً.")
+    active_game = info.get("game_state")
+    if active_game:
+        # أرسل تحذيراً واحداً فقط طوال جلسة اللعبة الحالية.
+        if not active_game.get("busy_warning_sent"):
+            active_game["busy_warning_sent"] = True
+            save_data()
+            await message.reply_text("🎮 أكو لعبة شغالة حالياً! خلّصوها أولاً.")
         return
 
     if game == "who":
@@ -2359,6 +2364,7 @@ async def game_callback(update, context):
             "type": "truth_prompt",
             "player": user.id,
             "message_id": sent.message_id,
+            "busy_warning_sent": bool(state.get("busy_warning_sent")),
         }
         save_data()
         return
