@@ -1487,12 +1487,18 @@ async def handle_group_text_commands(update, context):
         return True
 
     for lock_name, label in LOCK_TYPES.items():
-        if key in (f"قفل {label}", f"قفل {lock_name}"):
+        if (
+            key in (f"قفل {label}", f"قفل {lock_name}")
+            or (lock_name == "spam" and key == "قفل السبام")
+        ):
             await set_lock(
                 message, chat.id, user, lock_name, True, context
             )
             return True
-        if key in (f"فتح {label}", f"فتح {lock_name}"):
+        if (
+            key in (f"فتح {label}", f"فتح {lock_name}")
+            or (lock_name == "spam" and key == "فتح السبام")
+        ):
             await set_lock(
                 message, chat.id, user, lock_name, False, context
             )
