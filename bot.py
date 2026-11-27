@@ -1185,11 +1185,20 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
     info = chat_data(chat_id)
     info["locks"][lock_name] = bool(enabled)
     save_data()
-    state = "قفل" if enabled else "فتح"
-    await message.reply_text(
-        f"✅ تم {state} {LOCK_TYPES[lock_name]}."
-    )
-    log_action(chat_id, actor, f"{state} {LOCK_TYPES[lock_name]}")
+    if lock_name == "spam":
+        reply = (
+            "✅ تم تشغيل حماية السبام."
+            if enabled else
+            "✅ تم إيقاف حماية السبام، وباقي وظائف نيكسوس مستمرة بصورة طبيعية."
+        )
+        action = "تشغيل حماية السبام" if enabled else "إيقاف حماية السبام"
+    else:
+        state = "قفل" if enabled else "فتح"
+        reply = f"✅ تم {state} {LOCK_TYPES[lock_name]}."
+        action = f"{state} {LOCK_TYPES[lock_name]}"
+
+    await message.reply_text(reply)
+    log_action(chat_id, actor, action)
 
 
 # =========================================================
