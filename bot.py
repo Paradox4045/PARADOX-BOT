@@ -62,7 +62,7 @@ DELETE_MAX_AGE = 48 * 60 * 60
 
 BAD_WORDS = ["كلب", "حمار", "غبي", "حقير", "تافه"]
 LINK_PATTERN = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/)", re.I)
-SONG_PATTERN = re.compile(r"^\s*يوت\s+(.+)$", re.I)
+SONG_PATTERN = re.compile(r"^\s*(?:يوت|يوتيوب)\s+(.+)$", re.I)
 
 
 ROLE_ORDER = ["owner", "deputy", "admin", "supervisor", "assistant", "observer"]
