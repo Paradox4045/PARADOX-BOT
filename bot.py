@@ -2801,7 +2801,7 @@ async def scheduled_group_worker(application):
 
 
 async def start_background_tasks(application):
-    application.create_task(scheduled_group_worker(application))
+    asyncio.create_task(scheduled_group_worker(application))
 
 
 # =========================================================
