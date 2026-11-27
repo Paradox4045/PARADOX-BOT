@@ -1007,7 +1007,19 @@ async def render_statistics_section(chat_id, section, context):
             return "⚠️ سجل الإنذارات\n\nماكو إنذارات مسجلة حالياً."
         rows = ["⚠️ سجل الإنذارات:"]
         for uid, count in list(records.items())[:100]:
-            rows.append(f"• المعرف: {uid} — عدد الإنذارات: {count}")
+            display_name = None
+            try:
+                member = await context.bot.get_chat_member(chat_id, int(uid))
+                member_user = member.user
+                if member_user.username:
+                    display_name = f"@{member_user.username}"
+                else:
+                    display_name = member_user.full_name
+            except (TelegramError, ValueError, TypeError):
+                display_name = None
+            if not display_name:
+                display_name = f"عضو غير متاح ({uid})"
+            rows.append(f"• {display_name} — عدد الإنذارات: {count}")
         return "\n".join(rows)
     if section in ("muted", "banned", "restricted"):
         return await list_tracked(chat_id, section)
