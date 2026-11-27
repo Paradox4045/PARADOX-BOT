@@ -329,7 +329,9 @@ def chat_data(chat_id):
         role: dict(ROLE_DEFAULTS.get(role, {})) for role in ROLE_ORDER
     })
     for role in ROLE_ORDER:
-        info["role_permissions"].setdefault(role, dict(ROLE_DEFAULTS.get(role, {})))
+        info["role_permissions"].setdefault(role, {})
+        for permission, enabled in ROLE_DEFAULTS.get(role, {}).items():
+            info["role_permissions"][role].setdefault(permission, enabled)
     info.setdefault("protection_exemptions", [])
     info.setdefault("bad_words_enabled", True)
     info.setdefault("bot_join_monitor", True)
@@ -857,7 +859,7 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
     mapping = {
         "رفع مالك": ("owner", False), "عزل مالك": ("owner", True),
         "رفع نائب": ("deputy", False), "تعيين نائب": ("deputy", False),
-        "تعيين اداري": ("admin", False), "تعيين مشرف": ("supervisor", False),
+        "تعيين اداري": ("admin", False), "تعيين إداري": ("admin", False), "تعيين مشرف": ("supervisor", False),
         "رفع مشرف": ("supervisor", False), "عزل مشرف": ("supervisor", True),
         "تعيين مساعد": ("assistant", False), "تعيين مراقب": ("observer", False),
     }
@@ -2113,7 +2115,7 @@ async def handle_group_text_commands(update, context):
         role_command_normalized = normalize_message(role_command_text)
         if role_command_normalized in (
             "رفع مالك", "عزل مالك", "رفع نائب", "تعيين نائب",
-            "تعيين اداري", "تعيين مشرف", "رفع مشرف", "عزل مشرف",
+            "تعيين اداري", "تعيين إداري", "تعيين مشرف", "رفع مشرف", "عزل مشرف",
             "تعيين مساعد", "تعيين مراقب",
         ):
             await handle_role_assignment_command(
@@ -2516,6 +2518,28 @@ async def handle_group_text_commands(update, context):
             return True
         await message.reply_text(f"📢 تنبيه إلى {target.first_name}: يرجى الالتزام بقوانين المجموعة.")
         log_action(chat.id, user, "تنبيه عضو", target)
+        return True
+
+    if key in ("الإبلاغ", "ابلاغ", "إبلاغ"):
+        if not await require_permission(message, chat.id, user, "report", context):
+            return True
+        target = await reply_target(message)
+        if target:
+            log_action(chat.id, user, "بلاغ عن عضو", target)
+            await message.reply_text(f"📨 تم تسجيل البلاغ عن {target.full_name} وإضافته إلى سجل الإدارة.")
+        else:
+            log_action(chat.id, user, "بلاغ من عضو")
+            await message.reply_text("📨 تم تسجيل بلاغك في سجل الإدارة.")
+        return True
+
+    if key == "مساعدة":
+        await message.reply_text(
+            "📋 أوامر PARADOX 404\\n"
+            "كتم، فك الكتم، حظر، فك الحظر، طرد، إنذار، إزالة إنذار\\n"
+            "حذف، حذف 20، تثبيت، إلغاء التثبيت، معلومات عضو\\n"
+            "الإدارة والحماية، الإنذارات، سجل الإدارة، مراقبة\\n"
+            "للأغاني: يوت ثم اسم الأغنية."
+        )
         return True
 
     if key == "قوانين":
