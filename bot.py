@@ -2042,12 +2042,8 @@ async def moderate(update, context):
 
     text = message.text or message.caption or ""
 
-    if re.search(r"(?<!\w)(نيكسوس|نكسوس)(?!\w)", text, re.I):
-        silenced_users = data.get("settings", {}).get("nexus_silenced_users", {})
-        if str(user.id) in silenced_users:
-            return
-        await nexus_reply(message)
-        return
+    # الرد الترحيبي التلقائي عند ذكر اسم نيكسوس متوقف.
+    # تبقى أوامر NEXUS CORE ومعالجة بقية رسائل المجموعة فعالة.
 
     song_match = SONG_PATTERN.match(text)
     if song_match:
