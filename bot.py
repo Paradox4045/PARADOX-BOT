@@ -315,6 +315,75 @@ def save_data():
     os.replace(temp_path, DATA_FILE)
 
 
+def group_backup_dir(chat_id):
+    return DATA_FILE.parent / "backups" / str(int(chat_id))
+
+
+def list_group_backups(chat_id):
+    folder = group_backup_dir(chat_id)
+    if not folder.exists():
+        return []
+    return sorted(folder.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+
+
+def create_group_backup(chat_id, automatic=False):
+    """يحفظ بيانات مجموعة واحدة فقط، دون بيانات أو إعدادات المجموعات الأخرى."""
+    raw_chat_id = str(int(chat_id))
+    if raw_chat_id not in data.get("chats", {}):
+        return None
+    folder = group_backup_dir(chat_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    timestamp = int(time.time())
+    payload = {
+        "format": "PARADOX_GROUP_BACKUP_V1",
+        "chat_id": raw_chat_id,
+        "created_at": timestamp,
+        "automatic": bool(automatic),
+        "group": data["chats"][raw_chat_id],
+    }
+    target = folder / f"{timestamp}.json"
+    temp = target.with_suffix(".tmp")
+    with temp.open("w", encoding="utf-8") as output:
+        json.dump(payload, output, ensure_ascii=False, indent=2)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temp, target)
+    # Keep the latest 20 backups for each group.
+    for old in list_group_backups(chat_id)[20:]:
+        try:
+            old.unlink()
+        except OSError:
+            logger.exception("Could not prune old group backup %s", old)
+    return target
+
+
+def restore_group_backup(chat_id, backup_path):
+    """يرفض أي نسخة لا تحمل معرّف المجموعة المطلوبة."""
+    with Path(backup_path).open("r", encoding="utf-8") as source:
+        payload = json.load(source)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("format") != "PARADOX_GROUP_BACKUP_V1"
+        or str(payload.get("chat_id")) != str(int(chat_id))
+        or not isinstance(payload.get("group"), dict)
+    ):
+        raise ValueError("Backup does not belong to this group")
+    data.setdefault("chats", {})[str(int(chat_id))] = payload["group"]
+    chat_data(chat_id)
+    save_data()
+
+
+def backup_menu_keyboard(chat_id):
+    enabled = bool(chat_data(chat_id).get("auto_backup_enabled", False))
+    auto_label = "🟢 إيقاف النسخ التلقائي" if enabled else "⚪ تشغيل النسخ التلقائي"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ إنشاء نسخة الآن", callback_data=f"bk:create:{chat_id}")],
+        [InlineKeyboardButton("🗂️ النسخ السابقة", callback_data=f"bk:list:{chat_id}")],
+        [InlineKeyboardButton(auto_label, callback_data=f"bk:auto:{chat_id}")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+    ])
+
+
 def chat_data(chat_id):
     info = data["chats"].setdefault(str(chat_id), {})
     info.setdefault("warnings", {})
@@ -662,9 +731,9 @@ def main_menu(user_id=None):
             InlineKeyboardButton("📊 إحصاء", callback_data="statistics"),
         ],
         [
-            InlineKeyboardButton("👮 صلاحيات", callback_data="permissions_help"),
-            InlineKeyboardButton("📋 الأوامر", callback_data="commands_help"),
+            InlineKeyboardButton("💾 النسخ الاحتياطي والاستعادة", callback_data="backup_center"),
         ],
+        [InlineKeyboardButton("📋 الأوامر", callback_data="commands_help")],
         [InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="ai_menu")],
     ]
     if user_id is not None and is_bot_owner(user_id):
@@ -1232,6 +1301,146 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
+    if action == "backup_center":
+        if query.message and query.message.chat.type == ChatType.PRIVATE:
+            rows = []
+            for saved_chat_id, saved_info in data.get("chats", {}).items():
+                try:
+                    group_id = int(saved_chat_id)
+                    if await is_group_owner(group_id, user.id, context):
+                        title = (saved_info.get("title") or saved_chat_id)[:40]
+                        rows.append([InlineKeyboardButton(
+                            f"👥 {title}", callback_data=f"bk:menu:{group_id}"
+                        )])
+                except Exception:
+                    logger.exception("Backup group access check failed for %s", saved_chat_id)
+            rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+            await query.answer()
+            await query.edit_message_text(
+                "💾 النسخ الاحتياطي والاستعادة\\n\\nاختار المجموعة التي تريد إدارة نسخها الاحتياطية:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        else:
+            chat_id = query.message.chat.id
+            if not await is_group_owner(chat_id, user.id, context):
+                await query.answer("هذه الميزة خاصة بمالك المجموعة.", show_alert=True)
+                return
+            await query.answer()
+            await query.edit_message_text(
+                "💾 النسخ الاحتياطي والاستعادة\\n\\n"
+                "كل نسخة تخص هذه المجموعة وحدها، واستعادة النسخة لا تؤثر على بقية المجموعات.\\n"
+                "النسخ التلقائي ينشئ نسخة كل 24 ساعة.",
+                reply_markup=backup_menu_keyboard(chat_id),
+            )
+        return
+
+    if action.startswith("bk:"):
+        try:
+            parts = action.split(":")
+            operation = parts[1]
+            chat_id = int(parts[2])
+        except (ValueError, IndexError):
+            await query.answer("بيانات النسخة الاحتياطية غير صحيحة.", show_alert=True)
+            return
+        if not await is_group_owner(chat_id, user.id, context):
+            await query.answer("إدارة النسخ الاحتياطية خاصة بمالك المجموعة.", show_alert=True)
+            return
+
+        if operation == "menu":
+            await query.answer()
+            await query.edit_message_text(
+                "💾 النسخ الاحتياطي والاستعادة\\n\\n"
+                "اختار العملية. هذه النسخ تخص المجموعة المحددة فقط.",
+                reply_markup=backup_menu_keyboard(chat_id),
+            )
+            return
+
+        if operation == "create":
+            try:
+                backup_path = create_group_backup(chat_id, automatic=False)
+                if backup_path is None:
+                    await query.answer("لا توجد بيانات محفوظة لهذه المجموعة.", show_alert=True)
+                    return
+                log_action(chat_id, user, "إنشاء نسخة احتياطية يدوية")
+                await query.answer("تم إنشاء النسخة الاحتياطية ✅", show_alert=True)
+                await query.edit_message_text(
+                    f"✅ تم إنشاء نسخة احتياطية للمجموعة.\\nعدد النسخ المحفوظة: {len(list_group_backups(chat_id))}",
+                    reply_markup=backup_menu_keyboard(chat_id),
+                )
+            except Exception:
+                logger.exception("Manual group backup failed")
+                await query.answer("تعذر إنشاء النسخة الاحتياطية.", show_alert=True)
+            return
+
+        if operation == "list":
+            backups = list_group_backups(chat_id)
+            rows = []
+            for index, item in enumerate(backups[:10]):
+                stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.stat().st_mtime))
+                rows.append([
+                    InlineKeyboardButton(f"♻️ استعادة {stamp}", callback_data=f"bk:restore:{chat_id}:{index}"),
+                    InlineKeyboardButton("🗑️", callback_data=f"bk:delete:{chat_id}:{index}"),
+                ])
+            rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"bk:menu:{chat_id}")])
+            await query.answer()
+            await query.edit_message_text(
+                "🗂️ النسخ الاحتياطية السابقة\\n\\n"
+                + ("اختار نسخة لاستعادتها أو حذفها:" if backups else "ماكو نسخ محفوظة لهذه المجموعة بعد."),
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+            return
+
+        if operation in ("restore", "delete"):
+            try:
+                index = int(parts[3])
+                backups = list_group_backups(chat_id)
+                if index < 0 or index >= min(len(backups), 10):
+                    raise ValueError("Backup index out of range")
+                selected = backups[index]
+                if operation == "restore":
+                    # Save current state first, so a mistaken restore can be reversed.
+                    create_group_backup(chat_id, automatic=False)
+                    restore_group_backup(chat_id, selected)
+                    log_action(chat_id, user, "استعادة نسخة احتياطية للمجموعة")
+                    await query.answer("تمت الاستعادة بنجاح ✅", show_alert=True)
+                    await query.edit_message_text(
+                        "✅ تمت استعادة بيانات هذه المجموعة فقط. بقية المجموعات لم تتغير.",
+                        reply_markup=backup_menu_keyboard(chat_id),
+                    )
+                else:
+                    selected.unlink()
+                    log_action(chat_id, user, "حذف نسخة احتياطية")
+                    await query.answer("تم حذف النسخة.")
+                    await query.edit_message_text(
+                        "🗂️ النسخ الاحتياطية السابقة\\n\\nتم حذف النسخة المحددة.",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("⬅️ رجوع", callback_data=f"bk:list:{chat_id}")
+                        ]]),
+                    )
+            except (ValueError, IndexError, OSError, json.JSONDecodeError):
+                await query.answer("تعذر تنفيذ العملية على هذه النسخة.", show_alert=True)
+            except Exception:
+                logger.exception("Group backup operation failed")
+                await query.answer("حدث خطأ أثناء معالجة النسخة.", show_alert=True)
+            return
+
+        if operation == "auto":
+            info = chat_data(chat_id)
+            info["auto_backup_enabled"] = not bool(info.get("auto_backup_enabled", False))
+            info["next_auto_backup_at"] = int(time.time()) + 86400 if info["auto_backup_enabled"] else 0
+            save_data()
+            state = "مفعّل" if info["auto_backup_enabled"] else "متوقف"
+            log_action(chat_id, user, f"النسخ الاحتياطي التلقائي: {state}")
+            await query.answer(f"النسخ التلقائي {state}.")
+            await query.edit_message_text(
+                f"💾 النسخ الاحتياطي والاستعادة\\n\\nالنسخ التلقائي: {state}\\n"
+                "عند تفعيله، تُنشأ نسخة جديدة كل 24 ساعة.",
+                reply_markup=backup_menu_keyboard(chat_id),
+            )
+            return
+        await query.answer("عملية غير معروفة.", show_alert=True)
+        return
+
     if action.startswith("perm:"):
         try:
             _, chat_id, target_id, permission = action.split(":")
@@ -1725,14 +1934,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_keyboard(),
         )
 
-    elif action == "permissions_help":
-        await query.edit_message_text(
-            "👮 صلاحيات المشرفين\n\n"
-            "مالك المجموعة يرد على رسالة المشرف ويكتب:\n"
-            "صلاحيات المشرف\n\n"
-            "ثم يحدد صلاحياته من الأزرار. كل مشرف له إعداد مستقل.",
-            reply_markup=back_keyboard(),
-        )
 
     elif action == "commands_help":
         await query.edit_message_text(
@@ -2825,6 +3026,19 @@ async def scheduled_group_worker(application):
                         logger.exception("Daily protection report failed for %s", chat_id)
             except Exception:
                 logger.exception("Scheduled worker failed for group %s", raw_chat_id)
+        # Automatic backups are independent and scheduled per group.
+        for raw_chat_id in list(data.get("chats", {})):
+            try:
+                chat_id = int(raw_chat_id)
+                info = chat_data(chat_id)
+                if info.get("auto_backup_enabled", False) and int(info.get("next_auto_backup_at", 0)) <= now:
+                    info["next_auto_backup_at"] = now + 86400
+                    save_data()
+                    create_group_backup(chat_id, automatic=True)
+                    log_action(chat_id, None, "إنشاء نسخة احتياطية تلقائية")
+            except Exception:
+                logger.exception("Automatic group backup failed for %s", raw_chat_id)
+
         await asyncio.sleep(30)
 
 
