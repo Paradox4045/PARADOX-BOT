@@ -361,6 +361,7 @@ def chat_data(chat_id):
     info.setdefault("message_history", [])
     info.setdefault("game_scores", {})
     info.setdefault("game_state", None)
+    info.setdefault("reports", [])
     info.setdefault("scheduled_messages", [])
     info.setdefault("rules_text", "")
     info.setdefault("welcome_text", "أهلاً وسهلاً {name} 🌟\\nنورت PARADOX 404!")
@@ -2529,6 +2530,24 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
     info = chat_data(chat_id)
     raw_text = (message.text or "").strip()
 
+    if key in ("البلاغات", "سجل البلاغات"):
+        if not await require_permission(message, chat_id, user, "report", context):
+            return True
+        reports = info.get("reports", [])
+        if not reports:
+            await message.reply_text("📭 ماكو بلاغات مسجلة حالياً.")
+        else:
+            lines = ["📨 آخر البلاغات السرية:"]
+            for item in reversed(reports[-20:]):
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.get("time", 0)))
+                lines.append(
+                    f"\n#{item.get('id')} — {when}\n"
+                    f"👤 {item.get('name')} (ID: {item.get('user_id')})\n"
+                    f"📝 {item.get('details', '')[:500]}"
+                )
+            await message.reply_text("\n".join(lines))
+        return True
+
     if key == "بلاغ" or key.startswith("بلاغ "):
         details = re.sub(r"^/?بلاغ\s*", "", raw_text, flags=re.I).strip()
         replied = message.reply_to_message
@@ -2543,6 +2562,15 @@ async def handle_extra_group_features(message, chat_id, user, key, context):
             f"👤 المبلّغ: {user.full_name} (@{user.username or 'بدون يوزر'})\n"
             f"🆔 المبلّغ: {user.id}\n\n📝 التفاصيل:\n{details}"
         )
+        reports = info.setdefault("reports", [])
+        report_id = max([int(item.get("id", 0)) for item in reports] or [0]) + 1
+        reports.append({
+            "id": report_id, "time": int(time.time()),
+            "user_id": user.id, "name": user.full_name,
+            "details": details[:1000],
+        })
+        info["reports"] = reports[-100:]
+        save_data()
         recipients = set()
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
