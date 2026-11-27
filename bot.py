@@ -635,6 +635,9 @@ def main_menu(user_id=None):
     rows = [
         [
             InlineKeyboardButton("🛡️ حماية", callback_data="management"),
+            InlineKeyboardButton("👑 نظام الرتب", callback_data="rank_system"),
+        ],
+        [
             InlineKeyboardButton("📊 إحصاء", callback_data="statistics"),
         ],
         [
@@ -685,7 +688,7 @@ def permissions_keyboard(chat_id, target_id):
 # PARADOX ROLE PANEL / PROTECTION DASHBOARD
 # =========================================================
 
-def management_keyboard(chat_id):
+def role_menu_keyboard(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 المالك", callback_data=f"ar:{chat_id}:owner"),
          InlineKeyboardButton("💠 نائب المالك", callback_data=f"ar:{chat_id}:deputy")],
@@ -693,6 +696,13 @@ def management_keyboard(chat_id):
          InlineKeyboardButton("🔰 المشرف", callback_data=f"ar:{chat_id}:supervisor")],
         [InlineKeyboardButton("⚙️ المساعد", callback_data=f"ar:{chat_id}:assistant"),
          InlineKeyboardButton("👁️ المراقب", callback_data=f"ar:{chat_id}:observer")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+    ])
+
+
+def management_keyboard(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👑 نظام الرتب", callback_data=f"rm:{chat_id}")],
         [InlineKeyboardButton("🛡️ الحماية التلقائية", callback_data=f"ap:{chat_id}")],
         [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"al:{chat_id}"),
          InlineKeyboardButton("📊 الإحصائيات", callback_data=f"as:{chat_id}")],
@@ -713,7 +723,7 @@ def role_detail_keyboard(chat_id, role):
         )])
     rows.append([
         InlineKeyboardButton("👥 أعضاء الرتبة", callback_data=f"ru:{chat_id}:{role}"),
-        InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}"),
+        InlineKeyboardButton("⬅️ رجوع", callback_data=f"rm:{chat_id}"),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -1020,6 +1030,48 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "perm_close":
         await query.answer()
         await query.edit_message_text("تم إغلاق إعدادات الصلاحيات.")
+        return
+
+    if action == "rank_system":
+        if query.message and query.message.chat.type == ChatType.PRIVATE:
+            rows = []
+            for saved_chat_id, saved_info in data.get("chats", {}).items():
+                title = (saved_info.get("title") or saved_chat_id)[:45]
+                rows.append([InlineKeyboardButton(
+                    f"👥 {title}", callback_data=f"rm:{saved_chat_id}"
+                )])
+            rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+            await query.answer()
+            await query.edit_message_text(
+                "👑 نظام الرتب\n\nاختار المجموعة لإدارة رتبها:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        else:
+            chat_id = query.message.chat.id
+            if not await can_manage_panel(chat_id, user.id, context):
+                await query.answer("ما عندك صلاحية إدارة رتب هذه المجموعة.", show_alert=True)
+                return
+            await query.answer()
+            await query.edit_message_text(
+                "👑 نظام الرتب\nاختار الرتبة التي تريد إدارتها:",
+                reply_markup=role_menu_keyboard(chat_id),
+            )
+        return
+
+    if action.startswith("rm:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("معرّف مجموعة غير صحيح.", show_alert=True)
+            return
+        if not can_manage_panel(chat_id, user.id, context):
+            await query.answer("ما عندك صلاحية إدارة رتب هذه المجموعة.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            "👑 نظام الرتب\nاختار الرتبة التي تريد إدارتها:",
+            reply_markup=role_menu_keyboard(chat_id),
+        )
         return
 
     if action.startswith("mg:"):
