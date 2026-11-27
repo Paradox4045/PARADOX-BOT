@@ -5,12 +5,10 @@ import json
 import time
 import asyncio
 import logging
-import tempfile
 import difflib
 import unicodedata
 from pathlib import Path
 from collections import defaultdict, deque
-from urllib.parse import quote
 
 import requests
 
@@ -62,10 +60,6 @@ DELETE_MAX_AGE = 48 * 60 * 60
 BAD_WORDS = ["كلب", "حمار", "غبي", "حقير", "تافه"]
 LINK_PATTERN = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/)", re.I)
 SONG_PATTERN = re.compile(r"^\s*يوت\s+(.+)$", re.I)
-
-IA_SEARCH_URL = "https://archive.org/advancedsearch.php"
-IA_METADATA_URL = "https://archive.org/metadata/"
-IA_MAX_FILE_SIZE = 45 * 1024 * 1024
 
 PERMISSIONS = {
     "protection": "الحماية",
@@ -236,7 +230,6 @@ def chat_data(chat_id):
     info.setdefault("banned", {})
     info.setdefault("restricted", {})
     info.setdefault("delegates", [])
-    info.setdefault("songs", {})
     info.setdefault("activity", {})
     info.setdefault("locks", {})
     info["locks"].setdefault("links", True)
@@ -1271,382 +1264,82 @@ async def show_logs(message, chat_id, actor, context):
 
 
 # =========================================================
-# SONG LIBRARY
+# DIRECT YOUTUBE SEARCH
 # =========================================================
 
-async def add_song(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or not user:
-        return
-    if not await is_group_owner(chat.id, user.id, context):
-        await message.reply_text(
-            "⛔ إضافة الأغاني للمكتبة خاصة بمالك المجموعة."
-        )
-        return
-    if not context.args or not message.reply_to_message:
-        await message.reply_text(
-            "رد على ملف صوتي واكتب /addsong اسم الأغنية."
-        )
-        return
-    replied = message.reply_to_message
-    audio = replied.audio
-    if (
-        audio is None and replied.document
-        and replied.document.mime_type
-        and replied.document.mime_type.startswith("audio/")
-    ):
-        audio = replied.document
-    if audio is None:
-        await message.reply_text("❌ الرسالة ما تحتوي ملفاً صوتياً.")
-        return
-    name = " ".join(context.args).strip()
-    chat_data(chat.id)["songs"][name.lower()] = {
-        "name": name, "file_id": audio.file_id
+def youtube_search(query):
+    """Search YouTube and return public video links without downloading audio."""
+    from yt_dlp import YoutubeDL
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "noplaylist": True,
+        "socket_timeout": 15,
     }
-    save_data()
-    await message.reply_text(f"✅ تمت إضافة الأغنية: {name}")
+    with YoutubeDL(options) as ydl:
+        result = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
-
-async def delete_song(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or not user:
-        return
-    if not await is_group_owner(chat.id, user.id, context):
-        await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
-        return
-    name = " ".join(context.args).strip().lower()
-    if not name:
-        await message.reply_text("اكتب /delsong اسم الأغنية.")
-        return
-    songs = chat_data(chat.id)["songs"]
-    if name not in songs:
-        await message.reply_text("❌ الأغنية غير موجودة بالمكتبة.")
-        return
-    del songs[name]
-    save_data()
-    await message.reply_text("🗑️ تم حذف الأغنية من المكتبة.")
-
-
-# =========================================================
-# INTERNET ARCHIVE AUDIO SEARCH
-# =========================================================
-
-def ia_license_allowed(license_url):
-    if not license_url:
-        return False
-    license_url = str(license_url).lower().strip()
-    allowed = (
-        "creativecommons.org/publicdomain/mark/",
-        "creativecommons.org/publicdomain/zero/",
-        "creativecommons.org/licenses/by/",
-        "creativecommons.org/licenses/by-sa/",
-        "creativecommons.org/licenses/by-nd/",
-    )
-    return any(item in license_url for item in allowed)
-
-
-def audio_license_allowed(label, url=""):
-    value = f"{label or ''} {url or ''}".lower()
-    allowed = (
-        "public domain", "cc0", "cc by", "cc-by",
-        "cc by-sa", "cc-by-sa", "cc by-nd", "cc-by-nd",
-        "creativecommons.org/publicdomain/",
-        "creativecommons.org/licenses/by/",
-        "creativecommons.org/licenses/by-sa/",
-        "creativecommons.org/licenses/by-nd/",
-    )
-    return any(item in value for item in allowed)
-
-
-def download_audio_file(download_url):
-    response = requests.get(
-        download_url, stream=True, timeout=(15, 45),
-        headers={"User-Agent": "PARADOX-404/1.0 (audio search)"}
-    )
-    response.raise_for_status()
-    declared_size = response.headers.get("Content-Length")
-    if declared_size and declared_size.isdigit():
-        if int(declared_size) <= 0 or int(declared_size) > IA_MAX_FILE_SIZE:
-            response.close()
-            return None
-
-    temp_path = None
-    total_size = 0
-    try:
-        temp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-        temp_path = temp.name
-        with temp:
-            for chunk in response.iter_content(chunk_size=256 * 1024):
-                if not chunk:
-                    continue
-                total_size += len(chunk)
-                if total_size > IA_MAX_FILE_SIZE:
-                    raise ValueError("Audio file exceeds size limit")
-                temp.write(chunk)
-        if total_size < 1024:
-            raise ValueError("Audio file is empty or invalid")
-        with open(temp_path, "rb") as check:
-            header = check.read(3)
-        if not (header == b"ID3" or header[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")):
-            raise ValueError("Downloaded file is not an MP3 audio stream")
-        return temp_path
-    except Exception:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
-    finally:
-        response.close()
-
-
-def ia_search_queries(query):
-    cleaned = re.sub(r"[^\w\s'-]", " ", query, flags=re.UNICODE)
-    cleaned = " ".join(cleaned.split())
-    words = cleaned.split()
-    variants = [cleaned]
-    if len(words) > 1:
-        variants.extend((" ".join(words[:3]), words[0]))
-    unique = []
-    for value in variants:
-        if value and value.lower() not in [x.lower() for x in unique]:
-            unique.append(value)
-    return unique
-
-
-def ia_find_audio(query):
-    for search_text in ia_search_queries(query):
-        try:
-            search_params = [
-                ("q", f'mediatype:audio AND (title:"{search_text}" OR creator:"{search_text}")'),
-                ("fl[]", "identifier"), ("fl[]", "title"),
-                ("fl[]", "creator"), ("fl[]", "licenseurl"),
-                ("rows", "20"), ("page", "1"), ("output", "json"),
-            ]
-            response = requests.get(
-                IA_SEARCH_URL, params=search_params, timeout=(10, 20),
-                headers={"User-Agent": "PARADOX-404/1.0"}
-            )
-            response.raise_for_status()
-            documents = response.json().get("response", {}).get("docs", [])
-        except Exception:
-            logger.exception("Internet Archive search request failed")
+    matches = []
+    for item in (result or {}).get("entries") or []:
+        if not item:
             continue
+        video_id = item.get("id")
+        title = (item.get("title") or "").strip()
+        url = item.get("url") or item.get("webpage_url")
+        if video_id:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+        if title and url and "youtube.com" in url:
+            matches.append({"title": title[:90], "url": url})
+        if len(matches) >= 5:
+            break
+    return matches
 
-        for item in documents:
-            identifier = item.get("identifier")
-            if not identifier:
-                continue
-            try:
-                metadata_response = requests.get(
-                    IA_METADATA_URL + quote(identifier, safe=""),
-                    timeout=(10, 20), headers={"User-Agent": "PARADOX-404/1.0"}
-                )
-                metadata_response.raise_for_status()
-                metadata = metadata_response.json()
-                details = metadata.get("metadata", {})
-                if details.get("mediatype") != "audio":
-                    continue
-
-                license_url = details.get("licenseurl") or item.get("licenseurl") or ""
-                if not ia_license_allowed(license_url):
-                    continue
-
-                candidates = []
-                for file_info in metadata.get("files", []):
-                    filename = file_info.get("name", "")
-                    size = file_info.get("size", "")
-                    if not filename.lower().endswith(".mp3"):
-                        continue
-                    if not str(size).isdigit():
-                        continue
-                    size = int(size)
-                    if size <= 0 or size > IA_MAX_FILE_SIZE:
-                        continue
-                    if str(file_info.get("private", "")).lower() == "true":
-                        continue
-                    candidates.append(file_info)
-
-                candidates.sort(key=lambda item: int(item.get("size", 0)))
-                for file_info in candidates[:4]:
-                    filename = file_info["name"]
-                    download_url = (
-                        "https://archive.org/download/"
-                        + quote(identifier, safe="") + "/"
-                        + quote(filename, safe="/")
-                    )
-                    try:
-                        path = download_audio_file(download_url)
-                        if path:
-                            return {
-                                "path": path,
-                                "title": details.get("title", item.get("title", query)),
-                                "creator": details.get("creator", "غير معروف"),
-                                "license": license_url,
-                            }
-                    except Exception:
-                        logger.warning(
-                            "Skipping unavailable Internet Archive audio file: %s",
-                            filename, exc_info=True
-                        )
-            except Exception:
-                logger.warning(
-                    "Skipping invalid Internet Archive result: %s",
-                    identifier, exc_info=True
-                )
-                continue
-    return None
-
-
-def commons_find_audio(query):
-    api_url = "https://commons.wikimedia.org/w/api.php"
-    for search_text in ia_search_queries(query):
-        try:
-            response = requests.get(
-                api_url,
-                params={
-                    "action": "query",
-                    "generator": "search",
-                    "gsrsearch": f'filetype:audio "{search_text}"',
-                    "gsrnamespace": 6,
-                    "gsrlimit": 20,
-                    "prop": "imageinfo",
-                    "iiprop": "url|extmetadata",
-                    "iiurlwidth": 0,
-                    "format": "json",
-                },
-                timeout=(10, 20),
-                headers={"User-Agent": "PARADOX-404/1.0 (Telegram audio bot)"},
-            )
-            response.raise_for_status()
-            pages = response.json().get("query", {}).get("pages", {})
-        except Exception:
-            logger.exception("Wikimedia Commons audio search failed")
-            continue
-
-        for page in pages.values():
-            info = (page.get("imageinfo") or [{}])[0]
-            title = page.get("title", "")
-            download_url = info.get("url", "")
-            ext = Path(title).suffix.lower()
-            metadata = info.get("extmetadata", {})
-            license_name = (metadata.get("LicenseShortName") or {}).get("value", "")
-            license_url = (metadata.get("LicenseUrl") or {}).get("value", "")
-            if ext != ".mp3" or not download_url:
-                continue
-            if not audio_license_allowed(license_name, license_url):
-                continue
-            try:
-                path = download_audio_file(download_url)
-                if path:
-                    clean_title = Path(title).stem.replace("_", " ")
-                    artist = (metadata.get("Artist") or {}).get("value", "غير معروف")
-                    artist = re.sub(r"<[^>]+>", "", str(artist)).strip() or "غير معروف"
-                    return {
-                        "path": path,
-                        "title": clean_title or query,
-                        "creator": artist[:120],
-                        "license": license_name or "Creative Commons",
-                    }
-            except Exception:
-                logger.warning(
-                    "Skipping unavailable Wikimedia audio file: %s",
-                    title, exc_info=True
-                )
-    return None
-
-
-def find_audio_from_sources(query):
-    # جرّب أكثر من مصدر؛ فشل مصدر واحد لا يوقف بقية البحث.
-    for finder in (ia_find_audio, commons_find_audio):
-        try:
-            result = finder(query)
-            if result:
-                return result
-        except Exception:
-            logger.exception("Audio provider failed: %s", finder.__name__)
-    return None
 
 async def search_song(message, chat_id, query):
-    query = query.strip()
+    query = (query or "").strip()
     if not query:
         await message.reply_text("اكتب اسم الأغنية بعد كلمة يوت.")
         return
 
-    songs = chat_data(chat_id)["songs"]
-    normalized = query.lower()
-    matches = [
-        song for key, song in songs.items()
-        if normalized in key or key in normalized
-    ]
-    if matches:
-        song = matches[0]
-        try:
-            await message.reply_audio(
-                audio=song["file_id"],
-                title=song["name"],
-                caption=f"🎵 {song['name']}\nبواسطة PARADOX 404",
-                reply_to_message_id=message.message_id,
-            )
-            return
-        except TelegramError:
-            logger.exception("Song library send failed")
-
     status_message = await message.reply_text(
-        f"🔎 نيكسوس يبحث عن: {query}\n"
-        "🎵 جاري البحث عن ملف صوتي قابل للإرسال..."
+        f"🔎 نيكسوس يبحث مباشرة في يوتيوب عن: {query}"
     )
-    result = None
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(find_audio_from_sources, query),
-            timeout=65,
+        results = await asyncio.wait_for(
+            asyncio.to_thread(youtube_search, query),
+            timeout=35,
         )
-        if not result:
+        if not results:
             await status_message.edit_text(
-                "❌ ما حصلت ملفاً صوتياً مناسباً ومتاحاً.\n\n"
-                "جرّب اسماً آخر، أو أضف الأغنية إلى مكتبة المجموعة.\n"
-                "ملاحظة: البحث يقتصر على التسجيلات التي تعلن "
-                "تراخيص تسمح بإعادة الاستخدام."
+                "❌ ما حصلت نتائج بهالاسم على يوتيوب. جرّب تكتب اسم الأغنية بشكل أوضح."
             )
             return
 
-        with open(result["path"], "rb") as audio_file:
-            await message.reply_audio(
-                audio=InputFile(audio_file, filename="PARADOX_404.mp3"),
-                title=str(result["title"])[:64],
-                performer=str(result["creator"])[:64],
-                caption=(
-                    f"🎵 {result['title']}\n"
-                    f"👤 {result['creator']}\n"
-                    "🔥 PARADOX 404"
-                ),
-                reply_to_message_id=message.message_id,
-            )
-        await status_message.delete()
-
-    except asyncio.TimeoutError:
-        logger.warning("Internet Archive search timed out")
+        rows = [
+            [InlineKeyboardButton(
+                f"▶️ {item['title'][:55]}",
+                url=item["url"],
+            )]
+            for item in results
+        ]
         await status_message.edit_text(
-            "⏳ البحث أخذ وقتاً طويلاً.\nجرّب مرة ثانية بعد قليل."
+            f"🎵 نتائج البحث المباشر من يوتيوب عن: {query}\n"
+            "اختار النتيجة حتى تفتح الأغنية على يوتيوب:",
+            reply_markup=InlineKeyboardMarkup(rows),
+            disable_web_page_preview=True,
+        )
+    except asyncio.TimeoutError:
+        await status_message.edit_text(
+            "⏳ بحث يوتيوب تأخر. جرّب مرة ثانية بعد قليل."
         )
     except Exception:
-        logger.exception("Audio search or sending failed")
-        try:
-            await status_message.edit_text(
-                "⚠️ تعذر تحميل أو إرسال الملف الصوتي حالياً.\n"
-                "حاول مرة ثانية بعد قليل."
-            )
-        except TelegramError:
-            pass
-    finally:
-        if result and result.get("path") and os.path.exists(result["path"]):
-            try:
-                os.remove(result["path"])
-            except OSError:
-                logger.exception("Temporary audio cleanup failed")
+        logger.exception("YouTube search failed")
+        await status_message.edit_text(
+            "⚠️ تعذر البحث في يوتيوب حالياً. حاول مرة ثانية بعد قليل."
+        )
 
 
 # =========================================================
@@ -2359,8 +2052,6 @@ def main():
         import_data_backup,
     ))
 
-    app.add_handler(CommandHandler("addsong", add_song))
-    app.add_handler(CommandHandler("delsong", delete_song))
     app.add_handler(CommandHandler("grantunmute", grant_unmute))
     app.add_handler(CommandHandler("revokeunmute", revoke_unmute))
 
