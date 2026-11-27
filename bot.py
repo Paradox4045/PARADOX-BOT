@@ -40,17 +40,17 @@ BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "").strip()
 DATA_FILE = Path(os.getenv("DATA_FILE", "paradox_data.json"))
 
 WARN_LIMIT = 4
-SPAM_WINDOW_SECONDS = 8
-SPAM_MESSAGE_LIMIT = 8
-SPAM_BURST_SECONDS = 4
-SPAM_BURST_LIMIT = 6
+SPAM_WINDOW_SECONDS = 6
+SPAM_MESSAGE_LIMIT = 5
+SPAM_BURST_SECONDS = 3
+SPAM_BURST_LIMIT = 4
 
 # الحماية من الرسائل المتشابهة
-DUPLICATE_WINDOW_SECONDS = 30
-DUPLICATE_SIMILARITY_LIMIT = 0.94
-DUPLICATE_MIN_LENGTH = 18
-DUPLICATE_HISTORY_LIMIT = 15
-DUPLICATE_MATCH_LIMIT = 2
+DUPLICATE_WINDOW_SECONDS = 20
+DUPLICATE_SIMILARITY_LIMIT = 0.90
+DUPLICATE_MIN_LENGTH = 8
+DUPLICATE_HISTORY_LIMIT = 12
+DUPLICATE_MATCH_LIMIT = 1
 
 DELETE_MAX_MESSAGES = 1000
 DELETE_TRACK_LIMIT = 3000
@@ -1523,6 +1523,7 @@ async def handle_group_text_commands(update, context):
 # =========================================================
 
 async def issue_warning(message, chat_id, user, context, reason):
+    """يسجل الإنذار ويرسل التنبيه إلى المجموعة حتى لو حُذفت الرسالة الأصلية."""
     info = chat_data(chat_id)
     uid = str(user.id)
     current = min(
@@ -1539,22 +1540,27 @@ async def issue_warning(message, chat_id, user, context, reason):
             await mute_member(chat_id, user.id, context)
             info["muted"][uid] = {"name": user.full_name}
             save_data()
-            await message.reply_text(
+            notice = (
                 f"🔇 تم كتم {user.first_name} بعد {WARN_LIMIT} إنذارات.\n"
                 f"السبب الأخير: {reason}"
             )
             log_action(chat_id, None, "كتم تلقائي بعد الإنذارات", user)
         except TelegramError:
             logger.exception("Automatic mute failed")
-            await message.reply_text(
+            notice = (
                 f"⚠️ وصل {user.first_name} إلى {WARN_LIMIT} إنذارات، "
-                "لكن تعذر كتمه."
+                "لكن تعذر كتمه. تأكد من صلاحيات البوت."
             )
     else:
-        await message.reply_text(
+        notice = (
             f"⚠️ تحذير {current} من {WARN_LIMIT} لـ {user.first_name}.\n"
             f"السبب: {reason}"
         )
+
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=notice)
+    except TelegramError:
+        logger.exception("Could not send moderation warning to chat")
 
 
 async def count_activity(chat_id, user):
@@ -1737,7 +1743,7 @@ async def moderate(update, context):
             )
             return
 
-    # كشف الإغراق: لا يكفي عدد الرسائل وحده؛ يجب أن تكون هناك دفعة سريعة أيضاً.
+    # كشف الإغراق: 5 رسائل خلال 6 ثوانٍ، منها 4 خلال آخر 3 ثوانٍ.
     if locks.get("spam", True):
         key = (chat.id, user.id)
         now = time.time()
