@@ -342,6 +342,13 @@ def chat_data(chat_id):
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
     info.setdefault("nexus_ai_enabled", True)
+    # إعدادات يوتيوب وخصوصية نيكسوس تُحفظ لكل مجموعة على حدة.
+    # قيمة يوتيوب العامة تُستخدم كقيمة افتراضية أولية فقط.
+    info.setdefault(
+        "youtube_enabled",
+        data.get("settings", {}).get("youtube_enabled", True),
+    )
+    info.setdefault("nexus_silenced_users", {})
     info.setdefault("message_history", [])
     info.setdefault("game_scores", {})
     info.setdefault("game_state", None)
