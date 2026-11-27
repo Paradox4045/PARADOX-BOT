@@ -92,7 +92,7 @@ ROLE_COMMANDS = {
     ],
     "deputy": [
         ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
-        ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "mute"),
+        ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "unmute"),
         ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "assign_roles"),
         ("عزل_مشرف", "عزل مشرف عند التفويض", "assign_roles"),
         ("الإنذارات", "مراجعة إنذارات الأعضاء", "warnings"),
@@ -110,7 +110,7 @@ ROLE_COMMANDS = {
     ],
     "supervisor": [
         ("إنذار", "إنذار عضو", "warnings"), ("كتم", "كتم عضو", "mute"),
-        ("فك_الكتم", "فك الكتم عند التفويض", "mute"), ("حذف", "حذف رسالة", "delete"),
+        ("فك_الكتم", "فك الكتم عند التفويض", "unmute"), ("حذف", "حذف رسالة", "delete"),
         ("طرد", "طرد عضو عند التفويض", "ban"),
         ("معلومات_عضو", "عرض معلومات العضو", "stats"),
         ("الإبلاغ", "إرسال بلاغ للإدارة", "report"),
@@ -142,7 +142,8 @@ ROLE_DEFAULTS = {
 
 PERMISSIONS = {
     "protection": "الحماية",
-    "mute": "الكتم وفك الكتم",
+    "mute": "الكتم",
+    "unmute": "فك الكتم",
     "ban": "الحظر والطرد",
     "warnings": "الإنذارات",
     "delete": "حذف الرسائل والتنظيف",
@@ -2217,7 +2218,9 @@ async def handle_group_text_commands(update, context):
         return True
 
     text = (message.text or "").strip()
-    key = re.sub(r"\\s+", " ", text).strip().lower()
+    key = re.sub(r"\s+", " ", text).strip().lower()
+    if key.startswith("/"):
+        key = normalize_message(key[1:]).replace("_", " ").strip()
 
     # تحكم مالك المجموعة بتشغيل وإيقاف عقل نيكسوس.
     ai_control = normalize_message(text)
@@ -2419,6 +2422,112 @@ async def handle_group_text_commands(update, context):
             ):
                 await message.reply_text(await list_tracked(chat.id, kind))
             return True
+
+    if key.startswith("منح صلاحية") or key.startswith("سحب صلاحية"):
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ منح وسحب الصلاحيات الفردية خاص بالمالك.")
+            return True
+        target = await reply_target(message)
+        if not target:
+            await message.reply_text("رد على رسالة الشخص واكتب /منح_صلاحية حظر أو /سحب_صلاحية حظر.")
+            return True
+        parts = key.split()
+        permission_name = " ".join(parts[2:]).strip()
+        permission_aliases = {
+            "حظر": "ban", "الحظر": "ban", "طرد": "ban",
+            "كتم": "mute", "فك الكتم": "unmute",
+            "إنذارات": "warnings", "الإنذارات": "warnings",
+            "حذف": "delete", "تنظيف": "delete",
+            "تثبيت": "pin", "الإحصائيات": "stats", "احصائيات": "stats",
+            "الحماية": "protection", "السجل": "logs",
+            "إدارة الرتب": "manage_roles", "الرتب": "manage_roles",
+            "البلاغات": "report", "الترحيب": "welcome",
+        }
+        permission = permission_aliases.get(permission_name)
+        record = chat_data(chat.id)["roles"].get(str(target.id))
+        if not permission or not record or record.get("role") not in ROLE_ORDER:
+            await message.reply_text("⚠️ اكتب صلاحية معروفة، واختر شخصاً لديه رتبة داخل PARADOX 404.")
+            return True
+        if record.get("role") == "owner":
+            await message.reply_text("⛔ صلاحيات المالك كاملة وثابتة.")
+            return True
+        enabled = key.startswith("منح صلاحية")
+        overrides = record.setdefault("overrides", {})
+        default = bool(chat_data(chat.id)["role_permissions"].get(record["role"], {}).get(permission, False))
+        if enabled == default:
+            overrides.pop(permission, None)
+        else:
+            overrides[permission] = enabled
+        save_data()
+        log_action(chat.id, user, ("منح" if enabled else "سحب") + f" صلاحية {permission}", target)
+        await message.reply_text(f"✅ تم {'منح' if enabled else 'سحب'} الصلاحية من {target.full_name}.")
+        return True
+
+    if key in ("الإنذارات", "الانذارات", "مراجعة الإنذارات", "مراجعة الانذارات"):
+        if not await require_permission(message, chat.id, user, "warnings", context):
+            return True
+        target = await reply_target(message)
+        warnings = chat_data(chat.id)["warnings"]
+        if target:
+            count = int(warnings.get(str(target.id), 0))
+            await message.reply_text(f"⚠️ إنذارات {target.full_name}: {count}/{int(chat_data(chat.id).get('warning_limit', WARN_LIMIT))}")
+        else:
+            rows = [f"• {uid}: {count}" for uid, count in warnings.items() if int(count) > 0]
+            await message.reply_text("⚠️ سجل الإنذارات\\n\\n" + ("\\n".join(rows[:50]) if rows else "ماكو إنذارات مسجلة."))
+        return True
+
+    if key in ("إزالة إنذار", "ازالة انذار"):
+        if not await require_permission(message, chat.id, user, "warnings", context):
+            return True
+        target = await reply_target(message)
+        if not target:
+            await message.reply_text("رد على رسالة العضو واكتب /إزالة_إنذار.")
+            return True
+        warnings = chat_data(chat.id)["warnings"]
+        uid = str(target.id)
+        current = int(warnings.get(uid, 0))
+        if current <= 0:
+            await message.reply_text("ℹ️ هذا العضو ما عنده إنذارات.")
+        else:
+            warnings[uid] = current - 1
+            if warnings[uid] == 0:
+                warnings.pop(uid, None)
+            save_data()
+            log_action(chat.id, user, "إزالة إنذار", target)
+            await message.reply_text(f"✅ تم حذف إنذار. المتبقي: {max(0, current - 1)}.")
+        return True
+
+    if key in ("مراقبة", "سجل المخالفات"):
+        permission = "stats" if key == "مراقبة" else "logs"
+        if not await require_permission(message, chat.id, user, permission, context):
+            return True
+        if key == "مراقبة":
+            await message.reply_text(await render_group_stats(chat.id, context))
+        else:
+            await show_logs(message, chat.id, user, context)
+        return True
+
+    if key == "تنبيه":
+        if not await require_permission(message, chat.id, user, "report", context):
+            return True
+        target = await reply_target(message)
+        if not target:
+            await message.reply_text("رد على رسالة العضو واكتب /تنبيه.")
+            return True
+        await message.reply_text(f"📢 تنبيه إلى {target.first_name}: يرجى الالتزام بقوانين المجموعة.")
+        log_action(chat.id, user, "تنبيه عضو", target)
+        return True
+
+    if key == "قوانين":
+        await message.reply_text(chat_data(chat.id).get("rules_text", "📜 قوانين المجموعة لم يضفها المالك بعد."))
+        return True
+
+    if key == "الترحيب":
+        if not await require_permission(message, chat.id, user, "welcome", context):
+            return True
+        enabled = chat_data(chat.id).get("welcome", True)
+        await message.reply_text("🟢 الترحيب مفعّل." if enabled else "🔴 الترحيب متوقف.")
+        return True
 
     if key == "سجل الإدارة":
         await show_logs(message, chat.id, user, context)
