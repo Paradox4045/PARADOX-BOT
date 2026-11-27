@@ -40,14 +40,17 @@ BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "").strip()
 DATA_FILE = Path(os.getenv("DATA_FILE", "paradox_data.json"))
 
 WARN_LIMIT = 4
-SPAM_WINDOW_SECONDS = 10
-SPAM_MESSAGE_LIMIT = 6
+SPAM_WINDOW_SECONDS = 8
+SPAM_MESSAGE_LIMIT = 8
+SPAM_BURST_SECONDS = 4
+SPAM_BURST_LIMIT = 6
 
 # الحماية من الرسائل المتشابهة
-DUPLICATE_WINDOW_SECONDS = 25
-DUPLICATE_SIMILARITY_LIMIT = 0.88
-DUPLICATE_MIN_LENGTH = 12
-DUPLICATE_HISTORY_LIMIT = 12
+DUPLICATE_WINDOW_SECONDS = 30
+DUPLICATE_SIMILARITY_LIMIT = 0.94
+DUPLICATE_MIN_LENGTH = 18
+DUPLICATE_HISTORY_LIMIT = 15
+DUPLICATE_MATCH_LIMIT = 2
 
 DELETE_MAX_MESSAGES = 1000
 DELETE_TRACK_LIMIT = 3000
@@ -138,7 +141,7 @@ def is_duplicate_message(chat_id, user_id, text):
     while history and now - history[0][0] > DUPLICATE_WINDOW_SECONDS:
         history.popleft()
 
-    duplicate_found = False
+    similar_matches = 0
 
     for old_time, old_text in history:
         if len(old_text) < DUPLICATE_MIN_LENGTH:
@@ -149,15 +152,16 @@ def is_duplicate_message(chat_id, user_id, text):
         ).ratio()
 
         if similarity >= DUPLICATE_SIMILARITY_LIMIT:
-            duplicate_found = True
-            break
+            similar_matches += 1
 
     history.append((now, normalized))
 
     while len(history) > DUPLICATE_HISTORY_LIMIT:
         history.popleft()
 
-    return duplicate_found
+    # لا نعاقب العضو على أول تشابه؛ يلزم تكرار الرسالة ثلاث مرات
+    # (رسالتان سابقتان مشابهتان والرسالة الحالية).
+    return similar_matches >= DUPLICATE_MATCH_LIMIT
 
 
 # =========================================================
@@ -1733,7 +1737,7 @@ async def moderate(update, context):
             )
             return
 
-    # كشف الإغراق بالرسائل
+    # كشف الإغراق: لا يكفي عدد الرسائل وحده؛ يجب أن تكون هناك دفعة سريعة أيضاً.
     if locks.get("spam", True):
         key = (chat.id, user.id)
         now = time.time()
@@ -1743,14 +1747,22 @@ async def moderate(update, context):
         while queue and now - queue[0] > SPAM_WINDOW_SECONDS:
             queue.popleft()
 
-        if len(queue) >= SPAM_MESSAGE_LIMIT:
+        burst_count = sum(
+            1 for sent_at in queue
+            if now - sent_at <= SPAM_BURST_SECONDS
+        )
+
+        if (
+            len(queue) >= SPAM_MESSAGE_LIMIT
+            and burst_count >= SPAM_BURST_LIMIT
+        ):
             queue.clear()
             try:
                 await message.delete()
             except TelegramError:
                 logger.exception("Flood message delete failed")
             await issue_warning(
-                message, chat.id, user, context, "إغراق الرسائل"
+                message, chat.id, user, context, "إغراق سريع بالرسائل"
             )
 
 
