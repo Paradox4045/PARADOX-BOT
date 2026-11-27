@@ -237,6 +237,7 @@ def chat_data(chat_id):
     info.setdefault("admin_permissions", {})
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
+    info.setdefault("nexus_ai_enabled", True)
     info.setdefault("message_history", [])
     return info
 
@@ -1364,7 +1365,26 @@ async def handle_group_text_commands(update, context):
         return True
 
     text = (message.text or "").strip()
-    key = re.sub(r"\s+", " ", text).strip().lower()
+    key = re.sub(r"\\s+", " ", text).strip().lower()
+
+    # تحكم مالك المجموعة بتشغيل وإيقاف عقل نيكسوس.
+    ai_control = normalize_message(text)
+    if ai_control in ("تفعيل الذكاء", "تشغيل الذكاء"):
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ تشغيل الذكاء وإيقافه من صلاحية مالك المجموعة فقط.")
+            return True
+        chat_data(chat.id)["nexus_ai_enabled"] = True
+        save_data()
+        await message.reply_text("✅ تم تشغيل ذكاء نيكسوس. تگدر تناديه هسه.")
+        return True
+    if ai_control in ("تعطيل الذكاء", "ايقاف الذكاء", "وقف الذكاء"):
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ تشغيل الذكاء وإيقافه من صلاحية مالك المجموعة فقط.")
+            return True
+        chat_data(chat.id)["nexus_ai_enabled"] = False
+        save_data()
+        await message.reply_text("🛑 تم إيقاف ذكاء نيكسوس بهالمجموعة.")
+        return True
 
     # NEXUS CORE - المرحلة الأولى: فهم صيغ الكلام الطبيعي وتحويلها
     # إلى الأوامر الموجودة، مع إبقاء فحوص الصلاحيات داخل الدوال الأصلية.
@@ -1671,6 +1691,9 @@ async def count_activity(chat_id, user):
 
 async def nexus_ai_reply(message, chat_id, user, text):
     """يرد نيكسوس عبر Gemini فقط عند مناداته، ويحفظ سياقاً مختصراً لكل مجموعة."""
+    if not chat_data(chat_id).get("nexus_ai_enabled", True):
+        return False
+
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         return False
