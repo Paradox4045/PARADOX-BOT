@@ -730,6 +730,7 @@ def main_menu(user_id=None):
         [
             InlineKeyboardButton("📊 إحصاء", callback_data="statistics"),
         ],
+        [InlineKeyboardButton("🎮 الألعاب", callback_data="games_center")],
         [
             InlineKeyboardButton("💾 النسخ الاحتياطي والاستعادة", callback_data="backup_center"),
         ],
@@ -1299,6 +1300,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "اشترك بالقناة أولاً ثم أعد المحاولة.",
                 show_alert=True,
             )
+        return
+
+    if action == "games_center":
+        await query.answer()
+        await query.edit_message_text(
+            "🎮 مركز الألعاب — PARADOX 404\\n\\n"
+            "الألعاب تعمل داخل المجموعة حتى يشارك الأعضاء وتُسجّل نقاطهم بشكل مستقل لكل مجموعة.\\n\\n"
+            "افتح المجموعة واكتب: الألعاب\\n"
+            "الألعاب المتاحة: تحدي الكلمات، خمن الرقم، أسئلة الذكاء والثقافة، وحجر النرد.\\n\\n"
+            "🏆 لكل مجموعة لوحة متصدرين ونقاط خاصة بها.",
+            reply_markup=back_keyboard(),
+        )
         return
 
     if action == "backup_center":
@@ -4167,11 +4180,10 @@ DARE_PROMPTS = [
 
 def games_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🕵️ من أنا؟", callback_data="game:who"),
-         InlineKeyboardButton("🔤 فك الكلمة", callback_data="game:word")],
-        [InlineKeyboardButton("🧠 تحدي المعلومات", callback_data="game:quiz"),
-         InlineKeyboardButton("🕵️ المحقق", callback_data="game:detective")],
-        [InlineKeyboardButton("🔥 صراحة أو تحدي", callback_data="game:truth")],
+        [InlineKeyboardButton("🔤 تحدي الكلمات", callback_data="game:word")],
+        [InlineKeyboardButton("🔢 خمن الرقم", callback_data="game:number")],
+        [InlineKeyboardButton("🧠 أسئلة الذكاء والثقافة", callback_data="game:quiz")],
+        [InlineKeyboardButton("🎲 حجر النرد", callback_data="game:dice")],
         [InlineKeyboardButton("🏆 المتصدرون", callback_data="game:leaders"),
          InlineKeyboardButton("⭐ نقاطي", callback_data="game:points")],
     ])
