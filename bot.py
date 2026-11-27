@@ -1339,114 +1339,225 @@ def ia_license_allowed(license_url):
     return any(item in license_url for item in allowed)
 
 
-def ia_find_audio(query):
+def audio_license_allowed(label, url=""):
+    value = f"{label or ''} {url or ''}".lower()
+    allowed = (
+        "public domain", "cc0", "cc by", "cc-by",
+        "cc by-sa", "cc-by-sa", "cc by-nd", "cc-by-nd",
+        "creativecommons.org/publicdomain/",
+        "creativecommons.org/licenses/by/",
+        "creativecommons.org/licenses/by-sa/",
+        "creativecommons.org/licenses/by-nd/",
+    )
+    return any(item in value for item in allowed)
+
+
+def download_audio_file(download_url):
+    response = requests.get(
+        download_url, stream=True, timeout=(15, 45),
+        headers={"User-Agent": "PARADOX-404/1.0 (audio search)"}
+    )
+    response.raise_for_status()
+    declared_size = response.headers.get("Content-Length")
+    if declared_size and declared_size.isdigit():
+        if int(declared_size) <= 0 or int(declared_size) > IA_MAX_FILE_SIZE:
+            response.close()
+            return None
+
     temp_path = None
+    total_size = 0
     try:
-        safe_query = query.replace('"', " ").replace("\\", " ")
-        search_params = [
-            ("q", f'mediatype:audio AND (title:"{safe_query}" OR creator:"{safe_query}")'),
-            ("fl[]", "identifier"),
-            ("fl[]", "title"),
-            ("fl[]", "creator"),
-            ("fl[]", "licenseurl"),
-            ("rows", "8"),
-            ("page", "1"),
-            ("output", "json"),
-        ]
-        response = requests.get(
-            IA_SEARCH_URL, params=search_params, timeout=(10, 20)
-        )
-        response.raise_for_status()
-        documents = response.json().get("response", {}).get("docs", [])
+        temp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        temp_path = temp.name
+        with temp:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                total_size += len(chunk)
+                if total_size > IA_MAX_FILE_SIZE:
+                    raise ValueError("Audio file exceeds size limit")
+                temp.write(chunk)
+        if total_size < 1024:
+            raise ValueError("Audio file is empty or invalid")
+        with open(temp_path, "rb") as check:
+            header = check.read(3)
+        if not (header == b"ID3" or header[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")):
+            raise ValueError("Downloaded file is not an MP3 audio stream")
+        return temp_path
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+    finally:
+        response.close()
+
+
+def ia_search_queries(query):
+    cleaned = re.sub(r"[^\w\s'-]", " ", query, flags=re.UNICODE)
+    cleaned = " ".join(cleaned.split())
+    words = cleaned.split()
+    variants = [cleaned]
+    if len(words) > 1:
+        variants.extend((" ".join(words[:3]), words[0]))
+    unique = []
+    for value in variants:
+        if value and value.lower() not in [x.lower() for x in unique]:
+            unique.append(value)
+    return unique
+
+
+def ia_find_audio(query):
+    for search_text in ia_search_queries(query):
+        try:
+            search_params = [
+                ("q", f'mediatype:audio AND (title:"{search_text}" OR creator:"{search_text}")'),
+                ("fl[]", "identifier"), ("fl[]", "title"),
+                ("fl[]", "creator"), ("fl[]", "licenseurl"),
+                ("rows", "20"), ("page", "1"), ("output", "json"),
+            ]
+            response = requests.get(
+                IA_SEARCH_URL, params=search_params, timeout=(10, 20),
+                headers={"User-Agent": "PARADOX-404/1.0"}
+            )
+            response.raise_for_status()
+            documents = response.json().get("response", {}).get("docs", [])
+        except Exception:
+            logger.exception("Internet Archive search request failed")
+            continue
 
         for item in documents:
             identifier = item.get("identifier")
             if not identifier:
                 continue
-
-            metadata_response = requests.get(
-                IA_METADATA_URL + quote(identifier, safe=""),
-                timeout=(10, 20),
-            )
-            metadata_response.raise_for_status()
-            metadata = metadata_response.json()
-            details = metadata.get("metadata", {})
-
-            if details.get("mediatype") != "audio":
-                continue
-
-            license_url = (
-                details.get("licenseurl") or item.get("licenseurl") or ""
-            )
-            if not ia_license_allowed(license_url):
-                continue
-
-            mp3_files = []
-            for file_info in metadata.get("files", []):
-                filename = file_info.get("name", "")
-                size = file_info.get("size", "")
-                if not filename.lower().endswith(".mp3"):
-                    continue
-                if not str(size).isdigit():
-                    continue
-                size = int(size)
-                if size <= 0 or size > IA_MAX_FILE_SIZE:
-                    continue
-                if str(file_info.get("private", "")).lower() == "true":
-                    continue
-                mp3_files.append(file_info)
-
-            if not mp3_files:
-                continue
-
-            mp3_files.sort(key=lambda f: int(f.get("size", 0)))
-            filename = mp3_files[0]["name"]
-            download_url = (
-                "https://archive.org/download/"
-                + quote(identifier, safe="")
-                + "/" + quote(filename, safe="/")
-            )
-            audio_response = requests.get(
-                download_url, stream=True, timeout=(15, 45)
-            )
-            audio_response.raise_for_status()
-
-            temp = tempfile.NamedTemporaryFile(
-                suffix=".mp3", delete=False
-            )
-            temp_path = temp.name
-            total_size = 0
             try:
-                with temp:
-                    for chunk in audio_response.iter_content(
-                        chunk_size=256 * 1024
-                    ):
-                        if not chunk:
-                            continue
-                        total_size += len(chunk)
-                        if total_size > IA_MAX_FILE_SIZE:
-                            raise ValueError("Audio file exceeds size limit")
-                        temp.write(chunk)
-            finally:
-                audio_response.close()
+                metadata_response = requests.get(
+                    IA_METADATA_URL + quote(identifier, safe=""),
+                    timeout=(10, 20), headers={"User-Agent": "PARADOX-404/1.0"}
+                )
+                metadata_response.raise_for_status()
+                metadata = metadata_response.json()
+                details = metadata.get("metadata", {})
+                if details.get("mediatype") != "audio":
+                    continue
 
-            return {
-                "path": temp_path,
-                "title": details.get("title", item.get("title", query)),
-                "creator": details.get("creator", "غير معروف"),
-                "license": license_url,
-                "page": "https://archive.org/details/" + quote(identifier, safe=""),
-            }
+                license_url = details.get("licenseurl") or item.get("licenseurl") or ""
+                if not ia_license_allowed(license_url):
+                    continue
 
-    except Exception:
-        logger.exception("Internet Archive search failed")
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+                candidates = []
+                for file_info in metadata.get("files", []):
+                    filename = file_info.get("name", "")
+                    size = file_info.get("size", "")
+                    if not filename.lower().endswith(".mp3"):
+                        continue
+                    if not str(size).isdigit():
+                        continue
+                    size = int(size)
+                    if size <= 0 or size > IA_MAX_FILE_SIZE:
+                        continue
+                    if str(file_info.get("private", "")).lower() == "true":
+                        continue
+                    candidates.append(file_info)
+
+                candidates.sort(key=lambda item: int(item.get("size", 0)))
+                for file_info in candidates[:4]:
+                    filename = file_info["name"]
+                    download_url = (
+                        "https://archive.org/download/"
+                        + quote(identifier, safe="") + "/"
+                        + quote(filename, safe="/")
+                    )
+                    try:
+                        path = download_audio_file(download_url)
+                        if path:
+                            return {
+                                "path": path,
+                                "title": details.get("title", item.get("title", query)),
+                                "creator": details.get("creator", "غير معروف"),
+                                "license": license_url,
+                            }
+                    except Exception:
+                        logger.warning(
+                            "Skipping unavailable Internet Archive audio file: %s",
+                            filename, exc_info=True
+                        )
+            except Exception:
+                logger.warning(
+                    "Skipping invalid Internet Archive result: %s",
+                    identifier, exc_info=True
+                )
+                continue
     return None
 
+
+def commons_find_audio(query):
+    api_url = "https://commons.wikimedia.org/w/api.php"
+    for search_text in ia_search_queries(query):
+        try:
+            response = requests.get(
+                api_url,
+                params={
+                    "action": "query",
+                    "generator": "search",
+                    "gsrsearch": f'filetype:audio "{search_text}"',
+                    "gsrnamespace": 6,
+                    "gsrlimit": 20,
+                    "prop": "imageinfo",
+                    "iiprop": "url|extmetadata",
+                    "iiurlwidth": 0,
+                    "format": "json",
+                },
+                timeout=(10, 20),
+                headers={"User-Agent": "PARADOX-404/1.0 (Telegram audio bot)"},
+            )
+            response.raise_for_status()
+            pages = response.json().get("query", {}).get("pages", {})
+        except Exception:
+            logger.exception("Wikimedia Commons audio search failed")
+            continue
+
+        for page in pages.values():
+            info = (page.get("imageinfo") or [{}])[0]
+            title = page.get("title", "")
+            download_url = info.get("url", "")
+            ext = Path(title).suffix.lower()
+            metadata = info.get("extmetadata", {})
+            license_name = (metadata.get("LicenseShortName") or {}).get("value", "")
+            license_url = (metadata.get("LicenseUrl") or {}).get("value", "")
+            if ext != ".mp3" or not download_url:
+                continue
+            if not audio_license_allowed(license_name, license_url):
+                continue
+            try:
+                path = download_audio_file(download_url)
+                if path:
+                    clean_title = Path(title).stem.replace("_", " ")
+                    artist = (metadata.get("Artist") or {}).get("value", "غير معروف")
+                    artist = re.sub(r"<[^>]+>", "", str(artist)).strip() or "غير معروف"
+                    return {
+                        "path": path,
+                        "title": clean_title or query,
+                        "creator": artist[:120],
+                        "license": license_name or "Creative Commons",
+                    }
+            except Exception:
+                logger.warning(
+                    "Skipping unavailable Wikimedia audio file: %s",
+                    title, exc_info=True
+                )
+    return None
+
+
+def find_audio_from_sources(query):
+    # جرّب أكثر من مصدر؛ فشل مصدر واحد لا يوقف بقية البحث.
+    for finder in (ia_find_audio, commons_find_audio):
+        try:
+            result = finder(query)
+            if result:
+                return result
+        except Exception:
+            logger.exception("Audio provider failed: %s", finder.__name__)
+    return None
 
 async def search_song(message, chat_id, query):
     query = query.strip()
@@ -1480,7 +1591,7 @@ async def search_song(message, chat_id, query):
     result = None
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(ia_find_audio, query),
+            asyncio.to_thread(find_audio_from_sources, query),
             timeout=65,
         )
         if not result:
@@ -1499,9 +1610,7 @@ async def search_song(message, chat_id, query):
                 performer=str(result["creator"])[:64],
                 caption=(
                     f"🎵 {result['title']}\n"
-                    f"👤 الفنان/الرافع: {result['creator']}\n"
-                    f"📜 الترخيص المعلن: {result['license']}\n"
-                    f"🌐 المصدر: {result['page']}\n\n"
+                    f"👤 {result['creator']}\n"
                     "🔥 PARADOX 404"
                 ),
                 reply_to_message_id=message.message_id,
