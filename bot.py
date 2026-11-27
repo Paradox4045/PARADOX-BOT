@@ -2033,7 +2033,7 @@ async def nexus_ai_reply(message, chat_id, user, text):
 
     def call_gemini():
         response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
             headers={
                 "x-goog-api-key": api_key,
                 "Content-Type": "application/json",
