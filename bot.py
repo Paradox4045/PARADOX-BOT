@@ -702,7 +702,6 @@ def role_menu_keyboard(chat_id):
 
 def management_keyboard(chat_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👑 نظام الرتب", callback_data=f"rm:{chat_id}")],
         [InlineKeyboardButton("🛡️ الحماية التلقائية", callback_data=f"ap:{chat_id}")],
         [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"al:{chat_id}"),
          InlineKeyboardButton("📊 الإحصائيات", callback_data=f"as:{chat_id}")],
