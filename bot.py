@@ -23,7 +23,7 @@ from telegram.constants import ChatType
 from telegram.error import TelegramError
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters,
+    CallbackQueryHandler, ChatMemberHandler, ContextTypes, filters,
 )
 
 # =========================================================
@@ -2849,6 +2849,50 @@ async def nexus_ai_reply(message, chat_id, user, text):
         return True
 
 
+async def initialize_group_on_bot_join(update, context):
+    """إنشاء مساحة مستقلة للمجموعة تلقائياً عند إضافة البوت."""
+    membership = update.my_chat_member
+    chat = update.effective_chat
+    if not membership or not chat:
+        return
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return
+
+    old_status = membership.old_chat_member.status
+    new_status = membership.new_chat_member.status
+    if old_status not in ("left", "kicked") or new_status not in ("member", "administrator"):
+        return
+
+    info = chat_data(chat.id)
+    info.setdefault("created_at", int(time.time()))
+    info["independent_mode"] = True
+    info["isolation_version"] = 1
+    info["title"] = chat.title or str(chat.id)
+
+    # حفظ هوية منشئ تيليجرام للتوثيق فقط؛ التحقق الفعلي يبقى من Telegram API.
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+        creator = next((item.user for item in admins if item.status == "creator"), None)
+        if creator:
+            info["telegram_creator_id"] = creator.id
+    except TelegramError:
+        logger.info("Could not read creator while initializing chat %s", chat.id)
+
+    save_data()
+    try:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=(
+                "✅ تم تجهيز PARADOX 404 تلقائياً!\\n\\n"
+                "🔐 تم إنشاء نظام مستقل لهذه المجموعة.\\n"
+                "👑 الرتب والصلاحيات والحماية والسجلات خاصة بهذه المجموعة.\\n"
+                "📋 لوحة التحكم والترتيب والميزات موحّدة مع بقية المجموعات."
+            ),
+        )
+    except TelegramError:
+        logger.info("Could not send setup confirmation to chat %s", chat.id)
+
+
 async def welcome_new_members(update, context):
     message = update.effective_message
     chat = update.effective_chat
@@ -2857,16 +2901,19 @@ async def welcome_new_members(update, context):
     welcome_enabled = chat_data(chat.id).get("welcome", True)
     for member in message.new_chat_members:
         if member.is_bot:
+            # تتم تهيئة PARADOX نفسه عبر MY_CHAT_MEMBER؛ لا نسجله كبوت دخيل.
+            if member.id == context.bot.id:
+                continue
             if chat_data(chat.id).get("bot_join_monitor", True):
                 log_action(chat.id, None, "دخول حساب بوت جديد", member)
                 await message.reply_text(
-                    f"🤖 دخل حساب بوت جديد: {member.full_name}\n"
+                    f"🤖 دخل حساب بوت جديد: {member.full_name}\\n"
                     "تم تسجيل دخوله في سجل المراقبة."
                 )
             continue
         if welcome_enabled:
             await message.reply_text(
-                f"أهلاً وسهلاً {member.first_name} 🌟\n"
+                f"أهلاً وسهلاً {member.first_name} 🌟\\n"
                 "نورت PARADOX 404!"
             )
 
@@ -3438,6 +3485,11 @@ def main():
 
     app.add_handler(CommandHandler("grantunmute", grant_unmute))
     app.add_handler(CommandHandler("revokeunmute", revoke_unmute))
+
+    app.add_handler(ChatMemberHandler(
+        initialize_group_on_bot_join,
+        ChatMemberHandler.MY_CHAT_MEMBER,
+    ))
 
     app.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
