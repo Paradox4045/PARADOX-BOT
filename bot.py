@@ -2214,7 +2214,7 @@ async def start_game(chat_id, message, game):
         item = random.choice(GAME_QUESTIONS)
         info["game_state"] = {"type": "quiz", "answer": item["correct"], "question": item["q"]}
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"{label}. {answer}", callback_data=f"game:answer:{i}")
+            InlineKeyboardButton(f"{chr(65 + i)}. {answer}", callback_data=f"game:answer:{i}")
         ] for i, answer in enumerate(item["a"])])
         save_data()
         await message.reply_text("🧠 **تحدي المعلومات**\n" + item["q"], reply_markup=keyboard, parse_mode="Markdown")
@@ -2260,6 +2260,14 @@ async def handle_game_text(message, chat_id, user, text):
     guess = normalized
     if kind == "detective":
         guess = re.sub(r"^(?:اتهام|اتهم)s+", "", guess).strip()
+    if kind == "truth_prompt":
+        if int(state.get("player", 0)) != user.id:
+            return False
+        game_score(chat_id, user, 1)
+        info["game_state"] = None
+        save_data()
+        await message.reply_text(f"👏 أحسنت {user.first_name}! كملت التحدي وربحت نقطة ⭐")
+        return True
     if kind not in ("who", "word", "detective"):
         return False
     if guess == answer or (kind == "detective" and guess in ("الحارس", "الحارس هو السارق")):
