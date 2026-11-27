@@ -996,7 +996,8 @@ async def admin_action(update, context, action):
         except TelegramError:
             await message.reply_text(
                 "❌ تعذر حذف الرسالة. افحص صلاحية البوت."
-            )        return
+            )
+        return
 
     if action in ("pin", "unpin"):
         if not message.reply_to_message:
