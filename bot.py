@@ -204,6 +204,19 @@ def load_data():
 
 data = load_data()
 
+# استعادة سجل الرسائل من التخزين الدائم حتى يستمر أمر التنظيف بعد إعادة التشغيل.
+for _chat_id, _info in data.get("chats", {}).items():
+    _history = _info.get("message_history", [])
+    if isinstance(_history, list):
+        group_message_history[int(_chat_id)] = deque(
+            (
+                item for item in _history[-DELETE_TRACK_LIMIT:]
+                if isinstance(item, dict)
+                and "id" in item and "date" in item
+            ),
+            maxlen=DELETE_TRACK_LIMIT,
+        )
+
 
 def save_data():
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +243,7 @@ def chat_data(chat_id):
     info.setdefault("admin_permissions", {})
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
+    info.setdefault("message_history", [])
     return info
 
 
@@ -261,10 +275,15 @@ def track_group_message(message):
     if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
 
-    group_message_history[message.chat.id].append({
+    item = {
         "id": message.message_id,
         "date": message.date.timestamp(),
-    })
+    }
+    history = group_message_history[message.chat.id]
+    history.append(item)
+    info = chat_data(message.chat.id)
+    info["message_history"] = list(history)
+    save_data()
 
 
 async def delete_recent_messages(message, chat_id, actor, amount, context):
@@ -330,6 +349,10 @@ async def delete_recent_messages(message, chat_id, actor, amount, context):
             ),
             maxlen=DELETE_TRACK_LIMIT,
         )
+        chat_data(chat_id)["message_history"] = list(
+            group_message_history[chat_id]
+        )
+        save_data()
 
     try:
         await message.delete()
@@ -679,9 +702,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "📋 أوامر الإدارة (بالرد على رسالة العضو)\n\n"
             "كتم — إلغاء الكتم — حظر — إلغاء الحظر — طرد\n"
-            "تحذير — حذف — حذف 100 — تثبيت — إلغاء التثبيت\n"
-            "معلومات العضو — رفع مشرف — تنزيل مشرف — صلاحيات المشرف\n"
-            "مسح المكتومين — مسح الإنذارات\n\n"
+            "تحذير — تقييد — إلغاء التقييد — حذف — حذف 100\n"
+            "تثبيت — إلغاء التثبيت — معلومات العضو\n"
+            "رفع مشرف — تنزيل مشرف — صلاحيات المشرف\n"
+            "مسح المكتومين — مسح الإنذارات\n"
+            "تفعيل الترحيب — إيقاف الترحيب\n\n"
             "للأغاني: اكتب يوت ثم اسم الأغنية.",
             reply_markup=back_keyboard(),
         )
@@ -916,6 +941,7 @@ async def admin_action(update, context, action):
     target = await reply_target(message)
     permission_for_action = {
         "mute": "mute", "unmute": "mute",
+        "restrict": "mute", "unrestrict": "mute",
         "ban": "ban", "unban": "ban", "kick": "ban",
         "warn": "warnings", "clearwarn": "warnings",
         "delete": "delete", "pin": "pin", "unpin": "pin",
@@ -1019,6 +1045,40 @@ async def admin_action(update, context, action):
             save_data()
             log_action(chat.id, actor, "فك الكتم", target)
             await message.reply_text(f"🔊 تم فك الكتم عن {target.first_name}.")
+
+        elif action == "restrict":
+            permissions = ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+            )
+            await context.bot.restrict_chat_member(
+                chat.id, target.id, permissions=permissions,
+                use_independent_chat_permissions=True,
+            )
+            chat_data(chat.id)["restricted"][str(target.id)] = {
+                "name": target.full_name
+            }
+            log_action(chat.id, actor, "تقييد", target)
+            await message.reply_text(
+                f"⚠️ تم تقييد {target.first_name}. يگدر يكتب نص فقط."
+            )
+
+        elif action == "unrestrict":
+            await unmute_member(chat.id, target.id, context)
+            chat_data(chat.id)["restricted"].pop(str(target.id), None)
+            save_data()
+            log_action(chat.id, actor, "إلغاء التقييد", target)
+            await message.reply_text(
+                f"✅ تم إلغاء التقييد عن {target.first_name}."
+            )
 
         elif action == "ban":
             await context.bot.ban_chat_member(chat.id, target.id)
@@ -1560,6 +1620,20 @@ async def handle_group_text_commands(update, context):
         await show_admin_permissions(update, context)
         return True
 
+    if key in ("تفعيل الترحيب", "فتح الترحيب", "إيقاف الترحيب", "قفل الترحيب"):
+        if not await require_permission(
+            message, chat.id, user, "protection", context
+        ):
+            return True
+        enabled = key in ("تفعيل الترحيب", "فتح الترحيب")
+        chat_data(chat.id)["welcome"] = enabled
+        save_data()
+        await message.reply_text(
+            "✅ تم تفعيل الترحيب." if enabled else "✅ تم إيقاف الترحيب."
+        )
+        log_action(chat.id, user, "تفعيل الترحيب" if enabled else "إيقاف الترحيب")
+        return True
+
     for lock_name, label in LOCK_TYPES.items():
         if (
             key in (f"قفل {label}", f"قفل {lock_name}")
@@ -1582,6 +1656,8 @@ async def handle_group_text_commands(update, context):
         "كتم": "mute",
         "إلغاء الكتم": "unmute",
         "فك الكتم": "unmute",
+        "تقييد": "restrict",
+        "إلغاء التقييد": "unrestrict",
         "حظر": "ban",
         "إلغاء الحظر": "unban",
         "طرد": "kick",
