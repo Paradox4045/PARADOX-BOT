@@ -4213,6 +4213,14 @@ async def start_game(chat_id, message, game):
         item = random.choice(WORD_QUESTIONS)
         state = {"type": "word", "answer": item["a"], "question": item["q"]}
         prompt = "🔤 **فك الكلمة**\nرتّب الحروف التالية:\n" + item["q"] + "\n\nأول واحد يكتبها صح يفوز!"
+    elif game == "number":
+        number = random.randint(1, 20)
+        state = {"type": "number", "answer": str(number), "question": "خمن الرقم"}
+        prompt = (
+            "🔢 **خمن الرقم**\\n"
+            "اخترت رقماً من 1 إلى 20.\\n"
+            "أول عضو يخمنه بشكل صحيح يربح 3 نقاط ⭐"
+        )
     elif game == "quiz":
         item = random.choice(GAME_QUESTIONS)
         state = {
@@ -4319,6 +4327,23 @@ async def handle_game_text(message, chat_id, user, text, context):
         save_data()
         await message.reply_text(f"👏 أحسنت {user.first_name}! كملت التحدي وربحت نقطة ⭐")
         return True
+    if kind == "number":
+        if not guess.isdigit():
+            return False
+        picked = int(guess)
+        target_number = int(answer)
+        if picked == target_number:
+            game_score(chat_id, user, 3)
+            info["game_state"] = None
+            save_data()
+            await message.reply_text(
+                f"🎉 أحسنت {user.first_name}! خمنت الرقم الصحيح وربحت 3 نقاط ⭐\\n\\n"
+                + game_leaderboard(chat_id)
+            )
+        elif 1 <= picked <= 20:
+            hint = "أعلى ⬆️" if picked < target_number else "أقل ⬇️"
+            await message.reply_text(f"مو هذا الرقم، جرّب رقم {hint}.")
+        return True
     if kind not in ("who", "word", "detective"):
         return False
     if guess == answer or (kind == "detective" and guess in ("الحارس", "الحارس هو السارق")):
@@ -4396,8 +4421,18 @@ async def game_callback(update, context):
         else:
             await query.answer("مو صحيح، جرّب غيرك!", show_alert=True)
         return
-    games = {"game:who": "who", "game:word": "word", "game:quiz": "quiz",
-             "game:detective": "detective", "game:truth": "truth"}
+    if action == "game:dice":
+        try:
+            sent = await context.bot.send_dice(chat_id=chat_id, emoji="🎲")
+            value = int(sent.dice.value)
+            game_score(chat_id, user, value)
+            await query.answer(f"طلعت {value}! ربحت {value} نقاط ⭐", show_alert=True)
+            await message.reply_text(game_leaderboard(chat_id))
+        except TelegramError:
+            await query.answer("تعذر رمي حجر النرد حالياً.", show_alert=True)
+        return
+    games = {"game:who": "who", "game:word": "word", "game:number": "number",
+             "game:quiz": "quiz", "game:detective": "detective", "game:truth": "truth"}
     game = games.get(action)
     if game:
         await query.answer()
