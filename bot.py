@@ -1,10 +1,14 @@
+
 import os
 import re
 import json
 import time
+import asyncio
 import logging
 from pathlib import Path
 from collections import defaultdict, deque
+
+import yt_dlp
 
 from telegram import (
     Update,
@@ -75,12 +79,11 @@ DEFAULT_DATA = {
     "settings": {"force_channel": None, "force_channel_url": None},
 }
 
-# عدادات السبام مؤقتة في الذاكرة، ولا تُكتب على الملف كل رسالة.
 spam_tracker = defaultdict(deque)
 
 
 # =========================================================
-# DATA - الحفاظ على البيانات القديمة ومنها مكتبة الأغاني
+# DATA
 # =========================================================
 
 def load_data():
@@ -121,7 +124,7 @@ def chat_data(chat_id):
     info.setdefault("banned", {})
     info.setdefault("restricted", {})
     info.setdefault("delegates", [])
-    info.setdefault("songs", {})       # المكتبة تبقى محفوظة للمستقبل
+    info.setdefault("songs", {})
     info.setdefault("activity", {})
     info.setdefault("locks", {})
     info["locks"].setdefault("links", True)
@@ -179,7 +182,6 @@ async def has_permission(chat_id, user_id, permission, context):
         return False
     info = chat_data(chat_id)
     saved = info["admin_permissions"].get(str(user_id))
-    # المشرف الذي لم يخصص له المالك صلاحيات بعد: لا يحصل على أوامر البوت الإدارية.
     return bool(saved and saved.get(permission, False))
 
 
@@ -279,7 +281,7 @@ async def send_subscription_gate(message):
 
 
 # =========================================================
-# MENUS - لا يوجد زر أغاني، والبيانات محفوظة
+# MENUS
 # =========================================================
 
 def main_menu(user_id=None):
@@ -356,7 +358,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "check_subscription":
         if is_bot_owner(user.id) or await force_subscription_ok(user.id, context):
             await query.answer("تم التحقق بنجاح ✅")
-            await query.edit_message_text("✅ تم التحقق. أهلاً بك في PARADOX 404!", reply_markup=main_menu(user.id))
+            await query.edit_message_text(
+                "✅ تم التحقق. أهلاً بك في PARADOX 404!",
+                reply_markup=main_menu(user.id),
+            )
         else:
             await query.answer("اشترك بالقناة أولاً ثم أعد المحاولة.", show_alert=True)
         return
@@ -403,7 +408,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if action == "home":
-        await query.edit_message_text("🔥 PARADOX 404\n\nاختار القسم:", reply_markup=main_menu(user.id))
+        await query.edit_message_text(
+            "🔥 PARADOX 404\n\nاختار القسم:",
+            reply_markup=main_menu(user.id),
+        )
     elif action == "management":
         await query.edit_message_text(
             "🛡️ الحماية والإدارة\n\n"
@@ -447,7 +455,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "force_menu":
         channel = data["settings"].get("force_channel")
         status = f"القناة الحالية: {channel}" if channel else "الاشتراك الإجباري غير مفعّل."
-        await query.edit_message_text("📢 الاشتراك الإجباري\n\n" + status + "\n\nاختار العملية:", reply_markup=subscription_menu())
+        await query.edit_message_text(
+            "📢 الاشتراك الإجباري\n\n" + status + "\n\nاختار العملية:",
+            reply_markup=subscription_menu(),
+        )
     elif action == "force_activate":
         await query.edit_message_text(
             "أرسل بالخاص:\nتفعيل الاشتراك @قناتك\n\nلازم البوت يكون مشرفاً بالقناة.",
@@ -461,7 +472,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["settings"]["force_channel"] = None
         data["settings"]["force_channel_url"] = None
         save_data()
-        await query.edit_message_text("✅ تم تعطيل الاشتراك الإجباري.", reply_markup=subscription_menu())
+        await query.edit_message_text(
+            "✅ تم تعطيل الاشتراك الإجباري.",
+            reply_markup=subscription_menu(),
+        )
 
 
 # =========================================================
@@ -509,9 +523,13 @@ async def private_settings_text(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text("✅ تم تعطيل الاشتراك الإجباري.")
     elif command == "حالة الاشتراك":
         channel = data["settings"].get("force_channel")
-        await message.reply_text(f"📢 القناة الحالية: {channel}" if channel else "ℹ️ الاشتراك غير مفعّل.")
+        await message.reply_text(
+            f"📢 القناة الحالية: {channel}" if channel else "ℹ️ الاشتراك غير مفعّل."
+        )
     else:
-        await message.reply_text("أوامر الاشتراك:\nتفعيل الاشتراك @قناتك\nتعطيل الاشتراك\nحالة الاشتراك")
+        await message.reply_text(
+            "أوامر الاشتراك:\nتفعيل الاشتراك @قناتك\nتعطيل الاشتراك\nحالة الاشتراك"
+        )
 
 
 # =========================================================
@@ -571,15 +589,18 @@ async def admin_action(update, context, action):
     }[action]
 
     if action == "unmute":
-        # نحافظ على التفويض القديم لفك الكتم، إضافةً إلى الصلاحية المخصصة.
         info = chat_data(chat.id)
         delegated = (
             str(actor.id) in info["delegates"]
             and await is_admin(chat.id, actor.id, context)
         )
-        if not delegated and not await require_permission(message, chat.id, actor, "mute", context):
+        if not delegated and not await require_permission(
+            message, chat.id, actor, "mute", context
+        ):
             return
-    elif not await require_permission(message, chat.id, actor, permission_for_action, context):
+    elif not await require_permission(
+        message, chat.id, actor, permission_for_action, context
+    ):
         return
 
     if action == "clearwarn" and not target:
@@ -653,14 +674,18 @@ async def admin_action(update, context, action):
             log_action(chat.id, actor, "حظر", target)
             await message.reply_text(f"🚫 تم حظر {target.first_name}.")
         elif action == "unban":
-            await context.bot.unban_chat_member(chat.id, target.id, only_if_banned=True)
+            await context.bot.unban_chat_member(
+                chat.id, target.id, only_if_banned=True
+            )
             chat_data(chat.id)["banned"].pop(str(target.id), None)
             save_data()
             log_action(chat.id, actor, "إلغاء الحظر", target)
             await message.reply_text(f"✅ تم إلغاء حظر {target.first_name}.")
         elif action == "kick":
             await context.bot.ban_chat_member(chat.id, target.id)
-            await context.bot.unban_chat_member(chat.id, target.id, only_if_banned=True)
+            await context.bot.unban_chat_member(
+                chat.id, target.id, only_if_banned=True
+            )
             log_action(chat.id, actor, "طرد", target)
             await message.reply_text(f"👋 تم طرد {target.first_name}.")
         elif action == "warn":
@@ -671,7 +696,8 @@ async def admin_action(update, context, action):
             warnings = chat_data(chat.id)["warnings"].get(str(target.id), 0)
             await message.reply_text(
                 f"👤 معلومات العضو\nالاسم: {target.full_name}\n"
-                f"المعرف: {target.id}\nالحالة: {status}\nالإنذارات: {warnings}/{WARN_LIMIT}"
+                f"المعرف: {target.id}\nالحالة: {status}\n"
+                f"الإنذارات: {warnings}/{WARN_LIMIT}"
             )
         elif action == "promote":
             await context.bot.promote_chat_member(
@@ -707,7 +733,9 @@ async def admin_action(update, context, action):
         save_data()
     except TelegramError:
         logger.exception("Admin action failed: %s", action)
-        await message.reply_text("❌ تعذر تنفيذ الأمر. تأكد من صلاحيات البوت ورتبة العضو.")
+        await message.reply_text(
+            "❌ تعذر تنفيذ الأمر. تأكد من صلاحيات البوت ورتبة العضو."
+        )
 
 
 # =========================================================
@@ -758,12 +786,19 @@ async def list_tracked(chat_id, kind):
 
 async def show_top_users(chat_id):
     info = chat_data(chat_id)
-    ranked = sorted(info["activity"].items(), key=lambda item: int(item[1].get("count", 0)), reverse=True)[:20]
+    ranked = sorted(
+        info["activity"].items(),
+        key=lambda item: int(item[1].get("count", 0)),
+        reverse=True,
+    )[:20]
     if not ranked:
         return "📊 ماكو إحصائيات بعد."
     lines = ["📊 أكثر 20 عضواً تفاعلاً:"]
     for index, (uid, record) in enumerate(ranked, start=1):
-        lines.append(f"{index}. {record.get('name', 'عضو')} — {int(record.get('count', 0))} رسالة")
+        lines.append(
+            f"{index}. {record.get('name', 'عضو')} — "
+            f"{int(record.get('count', 0))} رسالة"
+        )
     return "\n".join(lines)
 
 
@@ -776,18 +811,27 @@ async def show_logs(message, chat_id, actor, context):
         return
     lines = ["📋 آخر عمليات الإدارة:"]
     for item in reversed(logs):
-        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(item["time"]))
+        when = time.strftime(
+            "%Y-%m-%d %H:%M",
+            time.localtime(item["time"]),
+        )
         target = f" ← {item['target']}" if item.get("target") else ""
-        lines.append(f"• {when} | {item['actor']}: {item['action']}{target}")
+        lines.append(
+            f"• {when} | {item['actor']}: {item['action']}{target}"
+        )
     await message.reply_text("\n".join(lines))
 
 
 # =========================================================
-# SONG LIBRARY - hidden from /start, retained for future use
+# SONG LIBRARY AND YOUTUBE SEARCH
 # =========================================================
 
 async def add_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
     if not message or not chat or not user:
         return
     if not await is_group_owner(chat.id, user.id, context):
@@ -798,19 +842,31 @@ async def add_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     replied = message.reply_to_message
     audio = replied.audio
-    if audio is None and replied.document and replied.document.mime_type and replied.document.mime_type.startswith("audio/"):
+    if (
+        audio is None
+        and replied.document
+        and replied.document.mime_type
+        and replied.document.mime_type.startswith("audio/")
+    ):
         audio = replied.document
     if audio is None:
         await message.reply_text("❌ الرسالة ما تحتوي ملفاً صوتياً.")
         return
     name = " ".join(context.args).strip()
-    chat_data(chat.id)["songs"][name.lower()] = {"name": name, "file_id": audio.file_id}
+    chat_data(chat.id)["songs"][name.lower()] = {
+        "name": name,
+        "file_id": audio.file_id,
+    }
     save_data()
     await message.reply_text(f"✅ تمت إضافة الأغنية: {name}")
 
 
 async def delete_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
     if not message or not chat or not user:
         return
     if not await is_group_owner(chat.id, user.id, context):
@@ -830,23 +886,94 @@ async def delete_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_song(message, chat_id, query):
-    songs = chat_data(chat_id)["songs"]
-    query = query.strip().lower()
-    matches = [song for key, song in songs.items() if query in key or key in query]
-    if not matches:
-        await message.reply_text("🔎 ما لقيت الأغنية بمكتبة PARADOX 404 حالياً.")
+    query = query.strip()
+
+    if not query:
+        await message.reply_text("اكتب اسم الأغنية بعد كلمة يوت.")
         return
-    song = matches[0]
+
+    # البحث أولاً في مكتبة PARADOX 404 القديمة
+    songs = chat_data(chat_id)["songs"]
+    normalized = query.lower()
+
+    matches = [
+        song for key, song in songs.items()
+        if normalized in key or key in normalized
+    ]
+
+    if matches:
+        song = matches[0]
+        try:
+            await message.reply_audio(
+                audio=song["file_id"],
+                title=song["name"],
+                caption=f"🎵 {song['name']}\nبواسطة PARADOX 404",
+                reply_to_message_id=message.message_id,
+            )
+            return
+        except TelegramError:
+            logger.exception("Song library send failed")
+
+    # إذا لم توجد بالمكتبة، نبحث في YouTube
+    await message.reply_text(f"🔎 دا أبحث عن: {query}")
+
+    def youtube_search():
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "ignoreerrors": True,
+        }
+        with yt_dlp.YoutubeDL(options) as ydl:
+            return ydl.extract_info(
+                f"ytsearch5:{query}",
+                download=False,
+            )
+
     try:
-        await message.reply_audio(
-            audio=song["file_id"],
-            title=song["name"],
-            caption=f"🎵 {song['name']}\nبواسطة PARADOX 404",
-            reply_to_message_id=message.message_id,
+        result = await asyncio.to_thread(youtube_search)
+        entries = (result or {}).get("entries") or []
+
+        if not entries:
+            await message.reply_text(
+                "❌ ما حصلت نتائج. جرّب اسم أغنية ثاني."
+            )
+            return
+
+        lines = ["🎵 نتائج البحث في YouTube:\n"]
+
+        for index, item in enumerate(entries, start=1):
+            if not item:
+                continue
+
+            title = item.get("title") or "بدون عنوان"
+            url = item.get("webpage_url") or item.get("url")
+            video_id = item.get("id")
+
+            if url and str(url).startswith("http"):
+                link = url
+            elif video_id:
+                link = f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                continue
+
+            lines.append(f"{index}. {title}\n{link}\n")
+
+        if len(lines) == 1:
+            await message.reply_text("❌ ما حصلت نتائج صالحة.")
+            return
+
+        await message.reply_text(
+            "\n".join(lines),
+            disable_web_page_preview=True,
         )
-    except TelegramError:
-        logger.exception("Song send failed")
-        await message.reply_text("❌ تعذر إرسال الملف الصوتي.")
+
+    except Exception:
+        logger.exception("YouTube search failed")
+        await message.reply_text(
+            "⚠️ تعذر البحث حالياً في YouTube. جرّب مرة ثانية بعد قليل."
+        )
 
 
 # =========================================================
@@ -854,9 +981,19 @@ async def search_song(message, chat_id, query):
 # =========================================================
 
 async def handle_group_text_commands(update, context):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
-    if not message or not chat or not user or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
+    if (
+        not message
+        or not chat
+        or not user
+        or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
+    ):
         return False
+
     text = (message.text or "").strip()
     key = re.sub(r"\s+", " ", text).strip().lower()
 
@@ -866,6 +1003,7 @@ async def handle_group_text_commands(update, context):
         else:
             await message.reply_text("⛔ ما عندك صلاحية عرض الإحصائيات.")
         return True
+
     if key in ("المشرفون", "المشرفين"):
         if not await require_permission(message, chat.id, user, "stats", context):
             return True
@@ -874,32 +1012,43 @@ async def handle_group_text_commands(update, context):
         except TelegramError:
             await message.reply_text("❌ ما كدرت أجيب قائمة المشرفين.")
         return True
+
     if key in ("المالكين", "المالك"):
         if not await require_permission(message, chat.id, user, "stats", context):
             return True
         try:
             admins = await context.bot.get_chat_administrators(chat.id)
             owners = [m.user for m in admins if m.status == "creator"]
-            await message.reply_text("👑 مالك المجموعة:\n" + "\n".join(f"• {u.full_name} — {u.id}" for u in owners))
+            await message.reply_text(
+                "👑 مالك المجموعة:\n"
+                + "\n".join(f"• {u.full_name} — {u.id}" for u in owners)
+            )
         except TelegramError:
             await message.reply_text("❌ تعذر جلب المالك.")
         return True
-    for key_name, kind in (("المكتومين", "muted"), ("المحظورين", "banned"), ("المقيدين", "restricted")):
+
+    for key_name, kind in (
+        ("المكتومين", "muted"),
+        ("المحظورين", "banned"),
+        ("المقيدين", "restricted"),
+    ):
         if key == key_name:
             if await require_permission(message, chat.id, user, "stats", context):
                 await message.reply_text(await list_tracked(chat.id, kind))
             return True
+
     if key == "سجل الإدارة":
         await show_logs(message, chat.id, user, context)
         return True
+
     if key == "مسح المكتومين":
         await unmute_all(update, context)
         return True
+
     if key == "صلاحيات المشرف":
         await show_admin_permissions(update, context)
         return True
 
-    # Lock and unlock commands.
     for lock_name, label in LOCK_TYPES.items():
         if key == f"قفل {label}" or key == f"قفل {lock_name}":
             await set_lock(message, chat.id, user, lock_name, True, context)
@@ -924,6 +1073,7 @@ async def handle_group_text_commands(update, context):
         "رفع مشرف": "promote",
         "تنزيل مشرف": "demote",
     }
+
     if key in actions:
         await admin_action(update, context, actions[key])
         return True
@@ -950,23 +1100,32 @@ async def issue_warning(message, chat_id, user, context, reason):
             info["muted"][uid] = {"name": user.full_name}
             save_data()
             await message.reply_text(
-                f"🔇 تم كتم {user.first_name} بعد {WARN_LIMIT} إنذارات.\nالسبب الأخير: {reason}"
+                f"🔇 تم كتم {user.first_name} بعد {WARN_LIMIT} إنذارات.\n"
+                f"السبب الأخير: {reason}"
             )
             log_action(chat_id, None, "كتم تلقائي بعد الإنذارات", user)
         except TelegramError:
             logger.exception("Automatic mute failed")
-            await message.reply_text(f"⚠️ وصل {user.first_name} إلى {WARN_LIMIT} إنذارات، لكن تعذر كتمه.")
+            await message.reply_text(
+                f"⚠️ وصل {user.first_name} إلى {WARN_LIMIT} إنذارات، "
+                "لكن تعذر كتمه."
+            )
     else:
-        await message.reply_text(f"⚠️ تحذير {current} من {WARN_LIMIT} لـ {user.first_name}.\nالسبب: {reason}")
+        await message.reply_text(
+            f"⚠️ تحذير {current} من {WARN_LIMIT} لـ {user.first_name}.\n"
+            f"السبب: {reason}"
+        )
 
 
 async def count_activity(chat_id, user):
     info = chat_data(chat_id)
     uid = str(user.id)
-    record = info["activity"].setdefault(uid, {"name": user.full_name, "count": 0})
+    record = info["activity"].setdefault(
+        uid,
+        {"name": user.full_name, "count": 0},
+    )
     record["name"] = user.full_name
     record["count"] = int(record.get("count", 0)) + 1
-    # حفظ دوري بسيط: نحفظ كل رسالة لضمان استمرار الإحصائيات.
     save_data()
 
 
@@ -983,21 +1142,30 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     for member in message.new_chat_members:
         if not member.is_bot:
-            await message.reply_text(f"أهلاً وسهلاً {member.first_name} 🌟\nنورت PARADOX 404!")
+            await message.reply_text(
+                f"أهلاً وسهلاً {member.first_name} 🌟\n"
+                "نورت PARADOX 404!"
+            )
 
 
 async def unmute_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
     if not message or not chat or not user:
         return
     if not await is_group_owner(chat.id, user.id, context):
         await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
         return
+
     info = chat_data(chat.id)
     ids = list(info["muted"].keys())
     if not ids:
         await message.reply_text("ℹ️ ماكو أعضاء مسجلين بالكتم عند البوت.")
         return
+
     success = failed = 0
     for uid in ids:
         try:
@@ -1008,9 +1176,12 @@ async def unmute_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             failed += 1
             logger.exception("Could not unmute %s", uid)
+
     save_data()
     log_action(chat.id, user, "فك كتم الجميع")
-    await message.reply_text(f"🧹 انتهت العملية.\n✅ فك الكتم: {success}\n❌ تعذر: {failed}")
+    await message.reply_text(
+        f"🧹 انتهت العملية.\n✅ فك الكتم: {success}\n❌ تعذر: {failed}"
+    )
 
 
 # =========================================================
@@ -1018,8 +1189,17 @@ async def unmute_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 
 async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
-    if not message or not chat or not user or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
+    if (
+        not message
+        or not chat
+        or not user
+        or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
+    ):
         return
     if user.is_bot:
         return
@@ -1031,24 +1211,20 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = message.text or message.caption or ""
 
-    # رد نيكسوس متاح للجميع.
     if re.search(r"(?<!\w)(نيكسوس|نكسوس)(?!\w)", text, re.IGNORECASE):
         await nexus_reply(message)
         return
 
-    # طلب الأغنية من المكتبة يبقى متاحاً حتى بعد إخفاء زر الأغاني من القائمة.
     song_match = SONG_PATTERN.match(text)
     if song_match:
         await search_song(message, chat.id, song_match.group(1))
         return
 
-    # لا تطبق الرقابة على مالك المجموعة أو المشرفين.
     if await is_admin(chat.id, user.id, context):
         return
 
     locks = chat_data(chat.id)["locks"]
 
-    # قفل أنواع الوسائط.
     blocked = None
     if locks.get("photos") and message.photo:
         blocked = "إرسال الصور مقفول"
@@ -1058,7 +1234,9 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocked = "إرسال الملفات مقفول"
     elif locks.get("stickers") and message.sticker:
         blocked = "إرسال الملصقات مقفول"
-    elif locks.get("voice") and (message.voice or message.audio or message.video_note):
+    elif locks.get("voice") and (
+        message.voice or message.audio or message.video_note
+    ):
         blocked = "إرسال الصوتيات مقفول"
     elif locks.get("polls") and message.poll:
         blocked = "الاستطلاعات مقفولة"
@@ -1099,7 +1277,6 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await issue_warning(message, chat.id, user, context, "لفظ مسيء")
         return
 
-    # رصد الإغراق: عدد رسائل كبير خلال فترة قصيرة.
     if locks.get("spam", True):
         key = (chat.id, user.id)
         now = time.time()
@@ -1117,11 +1294,15 @@ async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# DELEGATED UNMUTE - retained
+# DELEGATED UNMUTE
 # =========================================================
 
 async def grant_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
     if not message or not chat or not user:
         return
     if not await is_group_owner(chat.id, user.id, context):
@@ -1143,7 +1324,11 @@ async def grant_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def revoke_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, chat, user = update.effective_message, update.effective_chat, update.effective_user
+    message, chat, user = (
+        update.effective_message,
+        update.effective_chat,
+        update.effective_user,
+    )
     if not message or not chat or not user:
         return
     if not await is_group_owner(chat.id, user.id, context):
@@ -1154,9 +1339,13 @@ async def revoke_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("رد على رسالة المشرف واكتب /revokeunmute.")
         return
     info = chat_data(chat.id)
-    info["delegates"] = [x for x in info["delegates"] if x != str(target.id)]
+    info["delegates"] = [
+        x for x in info["delegates"] if x != str(target.id)
+    ]
     save_data()
-    await message.reply_text(f"✅ سُحبت صلاحية فك الكتم من {target.first_name}.")
+    await message.reply_text(
+        f"✅ سُحبت صلاحية فك الكتم من {target.first_name}."
+    )
     log_action(chat.id, user, "سحب صلاحية فك الكتم", target)
 
 
@@ -1168,7 +1357,10 @@ def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN غير موجود في متغيرات Railway.")
     if not BOT_OWNER_ID or not BOT_OWNER_ID.isdigit():
-        raise RuntimeError("أضف BOT_OWNER_ID في Railway Variables، وهو رقم حساب مالك البوت الأساسي.")
+        raise RuntimeError(
+            "أضف BOT_OWNER_ID في Railway Variables، "
+            "وهو رقم حساب مالك البوت الأساسي."
+        )
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -1180,25 +1372,31 @@ def main():
         private_settings_text,
     ))
 
-    # الأوامر القديمة للمكتبة تبقى، لكن زر الأغاني محذوف من /start.
     app.add_handler(CommandHandler("addsong", add_song))
     app.add_handler(CommandHandler("delsong", delete_song))
 
     app.add_handler(CommandHandler("grantunmute", grant_unmute))
     app.add_handler(CommandHandler("revokeunmute", revoke_unmute))
 
-    # استقبال الترحيب قبل معالجة الرسائل النصية.
     app.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
         welcome_new_members,
     ))
 
-    # جميع أوامر الإدارة النصية والرسائل تمر من هنا.
     app.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & (filters.TEXT | filters.CAPTION | filters.PHOTO |
-                                   filters.VIDEO | filters.ANIMATION | filters.Document.ALL |
-                                   filters.Sticker.ALL | filters.VOICE | filters.AUDIO |
-                                   filters.VIDEO_NOTE | filters.POLL),
+        filters.ChatType.GROUPS & (
+            filters.TEXT
+            | filters.CAPTION
+            | filters.PHOTO
+            | filters.VIDEO
+            | filters.ANIMATION
+            | filters.Document.ALL
+            | filters.Sticker.ALL
+            | filters.VOICE
+            | filters.AUDIO
+            | filters.VIDEO_NOTE
+            | filters.POLL
+        ),
         moderate,
     ))
 
