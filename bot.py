@@ -168,6 +168,7 @@ LOCK_TYPES = {
 
 DEFAULT_DATA = {
     "chats": {},
+    "bot_groups": {},
     "settings": {"force_channel": None, "force_channel_url": None},
 }
 
@@ -275,6 +276,7 @@ def load_data():
         if not isinstance(loaded, dict):
             raise ValueError("Invalid data")
         loaded.setdefault("chats", {})
+        loaded.setdefault("bot_groups", {})
         loaded.setdefault("settings", {})
         loaded["settings"].setdefault("force_channel", None)
         loaded["settings"].setdefault("force_channel_url", None)
@@ -661,9 +663,118 @@ def main_menu(user_id=None):
     ]
     if user_id is not None and is_bot_owner(user_id):
         rows.append([InlineKeyboardButton(
+            "👥 المجموعات", callback_data="bg:list"
+        )])
+        rows.append([InlineKeyboardButton(
             "📢 اشتراك", callback_data="force_menu"
         )])
     return InlineKeyboardMarkup(rows)
+
+
+def bot_groups_keyboard():
+    groups = data.setdefault("bot_groups", {})
+    active = [
+        (chat_id, info) for chat_id, info in groups.items()
+        if info.get("status") in ("member", "administrator")
+    ]
+    active.sort(key=lambda item: (item[1].get("title") or "").casefold())
+    rows = []
+    for chat_id, info in active:
+        title = (info.get("title") or chat_id)[:45]
+        mark = "🛡️" if info.get("status") == "administrator" else "👥"
+        rows.append([InlineKeyboardButton(
+            f"{mark} {title}", callback_data=f"bg:{chat_id}"
+        )])
+    rows.append([InlineKeyboardButton("🔄 تحديث القائمة", callback_data="bg:refresh")])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def render_bot_groups(context):
+    """تحديث حالات المجموعات المعروفة من Telegram قبل عرضها للمالك."""
+    groups = data.setdefault("bot_groups", {})
+    # المجموعات المسجلة سابقاً في بيانات البوت تدخل القائمة أيضاً.
+    for chat_id, info in data.get("chats", {}).items():
+        groups.setdefault(str(chat_id), {
+            "title": info.get("title") or str(chat_id),
+            "status": "unknown",
+        })
+
+    for raw_chat_id, info in list(groups.items()):
+        try:
+            member = await context.bot.get_chat_member(
+                int(raw_chat_id), context.bot.id
+            )
+            info["status"] = member.status
+            try:
+                chat = await context.bot.get_chat(int(raw_chat_id))
+                info["title"] = chat.title or info.get("title") or raw_chat_id
+                info["member_count"] = await context.bot.get_chat_member_count(
+                    int(raw_chat_id)
+                )
+            except TelegramError:
+                pass
+        except TelegramError:
+            # فشل الاستعلام لا يعني أن البوت غادر؛ نحافظ على آخر حالة معروفة.
+            info.setdefault("status", "unknown")
+    save_data()
+
+    active = sum(
+        1 for item in groups.values()
+        if item.get("status") in ("member", "administrator")
+    )
+    admins = sum(
+        1 for item in groups.values()
+        if item.get("status") == "administrator"
+    )
+    return (
+        f"👥 مجموعات PARADOX 404\\n\\n"
+        f"📌 المجموعات الموجودة حالياً: {active}\\n"
+        f"🛡️ مجموعات البوت فيها مشرف: {admins}\\n\\n"
+        "اختار مجموعة لعرض تفاصيلها:"
+    )
+
+
+def bot_group_detail_text(chat_id, info):
+    status = info.get("status", "unknown")
+    status_text = {
+        "administrator": "🛡️ مشرف",
+        "member": "👥 عضو",
+        "left": "🚪 غادر المجموعة",
+        "kicked": "⛔ تمت إزالة البوت",
+        "unknown": "❔ غير معروف",
+    }.get(status, status)
+    added_by = info.get("added_by_name") or "غير مسجل"
+    added_username = info.get("added_by_username")
+    if added_username:
+        added_by += f" (@{added_username})"
+    count = info.get("member_count")
+    count_text = str(count) if count is not None else "غير متاح"
+    return (
+        f"👥 تفاصيل المجموعة\\n\\n"
+        f"🏷️ الاسم: {info.get('title') or 'غير معروف'}\\n"
+        f"🆔 المعرّف: {chat_id}\\n"
+        f"📍 حالة البوت: {status_text}\\n"
+        f"👤 عدد الأعضاء: {count_text}\\n"
+        f"➕ أُضيف بواسطة: {added_by}"
+    )
+
+
+async def refresh_bot_group_detail(chat_id, context):
+    info = data.setdefault("bot_groups", {}).setdefault(str(chat_id), {})
+    try:
+        member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        info["status"] = member.status
+        chat = await context.bot.get_chat(chat_id)
+        info["title"] = chat.title or info.get("title") or str(chat_id)
+        try:
+            info["member_count"] = await context.bot.get_chat_member_count(chat_id)
+        except TelegramError:
+            pass
+    except TelegramError:
+        info.setdefault("status", "unknown")
+    save_data()
+    return info
 
 
 def back_keyboard():
@@ -1072,6 +1183,34 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     action = query.data or ""
+
+    if action.startswith("bg:"):
+        if not is_bot_owner(user.id):
+            await query.answer("هذه القائمة خاصة بمالك البوت فقط.", show_alert=True)
+            return
+        if action in ("bg:list", "bg:refresh"):
+            await query.answer("جاري تحديث المجموعات...")
+            body = await render_bot_groups(context)
+            await query.edit_message_text(
+                body,
+                reply_markup=bot_groups_keyboard(),
+            )
+            return
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await query.answer("معرّف مجموعة غير صحيح.", show_alert=True)
+            return
+        info = await refresh_bot_group_detail(chat_id, context)
+        await query.answer()
+        await query.edit_message_text(
+            bot_group_detail_text(chat_id, info),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 تحديث التفاصيل", callback_data=f"bg:{chat_id}")],
+                [InlineKeyboardButton("⬅️ رجوع للمجموعات", callback_data="bg:list")],
+            ]),
+        )
+        return
 
     if action == "check_subscription":
         if is_bot_owner(user.id) or await force_subscription_ok(user.id, context):
@@ -3091,7 +3230,7 @@ async def monitor_group_joins(update, context):
 
 
 async def initialize_group_on_bot_join(update, context):
-    """إنشاء مساحة مستقلة للمجموعة تلقائياً عند إضافة البوت."""
+    """تتبع وجود البوت بالمجموعات وإشعار مالكه عند منحه صفة مشرف."""
     membership = update.my_chat_member
     chat = update.effective_chat
     if not membership or not chat:
@@ -3101,37 +3240,81 @@ async def initialize_group_on_bot_join(update, context):
 
     old_status = membership.old_chat_member.status
     new_status = membership.new_chat_member.status
-    if old_status not in ("left", "kicked") or new_status not in ("member", "administrator"):
-        return
+    actor = membership.from_user
+    groups = data.setdefault("bot_groups", {})
+    key = str(chat.id)
+    record = groups.setdefault(key, {})
+    was_admin = old_status == "administrator"
+    is_admin_now = new_status == "administrator"
+    is_present = new_status in ("member", "administrator", "restricted")
 
-    info = chat_data(chat.id)
-    info.setdefault("created_at", int(time.time()))
-    info["independent_mode"] = True
-    info["isolation_version"] = 1
-    info["title"] = chat.title or str(chat.id)
+    record["title"] = chat.title or record.get("title") or str(chat.id)
+    record["status"] = new_status
+    record["updated_at"] = int(time.time())
 
-    # حفظ هوية منشئ تيليجرام للتوثيق فقط؛ التحقق الفعلي يبقى من Telegram API.
-    try:
-        admins = await context.bot.get_chat_administrators(chat.id)
-        creator = next((item.user for item in admins if item.status == "creator"), None)
-        if creator:
-            info["telegram_creator_id"] = creator.id
-    except TelegramError:
-        logger.info("Could not read creator while initializing chat %s", chat.id)
+    if old_status in ("left", "kicked") and is_present:
+        record["joined_at"] = int(time.time())
+        record["added_by_id"] = actor.id if actor else None
+        record["added_by_name"] = actor.full_name if actor else "غير معروف"
+        record["added_by_username"] = actor.username if actor else None
+    elif actor and not record.get("added_by_id"):
+        record["added_by_id"] = actor.id
+        record["added_by_name"] = actor.full_name
+        record["added_by_username"] = actor.username
+
+    if new_status in ("left", "kicked"):
+        record["left_at"] = int(time.time())
+
+    # إنشاء مساحة المجموعة المستقلة عند أول إضافة، كما كان سابقاً.
+    if old_status in ("left", "kicked") and is_present:
+        info = chat_data(chat.id)
+        info.setdefault("created_at", int(time.time()))
+        info["independent_mode"] = True
+        info["isolation_version"] = 1
+        info["title"] = chat.title or str(chat.id)
+
+        try:
+            admins = await context.bot.get_chat_administrators(chat.id)
+            creator = next((item.user for item in admins if item.status == "creator"), None)
+            if creator:
+                info["telegram_creator_id"] = creator.id
+        except TelegramError:
+            logger.info("Could not read creator while initializing chat %s", chat.id)
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=(
+                    "✅ تم تجهيز PARADOX 404 تلقائياً!\\n\\n"
+                    "🔐 تم إنشاء نظام مستقل لهذه المجموعة.\\n"
+                    "👑 الرتب والصلاحيات والحماية والسجلات خاصة بهذه المجموعة.\\n"
+                    "📋 لوحة التحكم والترتيب والميزات موحّدة مع بقية المجموعات."
+                ),
+            )
+        except TelegramError:
+            logger.info("Could not send setup confirmation to chat %s", chat.id)
 
     save_data()
-    try:
-        await context.bot.send_message(
-            chat_id=chat.id,
-            text=(
-                "✅ تم تجهيز PARADOX 404 تلقائياً!\\n\\n"
-                "🔐 تم إنشاء نظام مستقل لهذه المجموعة.\\n"
-                "👑 الرتب والصلاحيات والحماية والسجلات خاصة بهذه المجموعة.\\n"
-                "📋 لوحة التحكم والترتيب والميزات موحّدة مع بقية المجموعات."
-            ),
-        )
-    except TelegramError:
-        logger.info("Could not send setup confirmation to chat %s", chat.id)
+
+    # إشعار المالك الأساسي عند إضافة البوت مشرفاً أو ترقيته إلى مشرف.
+    if is_admin_now and not was_admin:
+        added_by = actor.full_name if actor else "غير معروف"
+        username = f" (@{actor.username})" if actor and actor.username else ""
+        try:
+            await context.bot.send_message(
+                chat_id=int(BOT_OWNER_ID),
+                text=(
+                    "🔔 تم إضافة بوت PARADOX 404 مشرفاً في مجموعة جديدة!\\n\\n"
+                    f"🏷️ اسم المجموعة: {chat.title or 'بدون اسم'}\\n"
+                    f"🆔 معرّف المجموعة: {chat.id}\\n"
+                    f"👤 أُضيف بواسطة: {added_by}{username}\\n"
+                    f"📍 حالة البوت: مشرف"
+                ),
+            )
+        except (TelegramError, ValueError):
+            logger.warning(
+                "Could not notify bot owner about group %s", chat.id
+            )
 
 
 async def welcome_new_members(update, context):
