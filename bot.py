@@ -2234,39 +2234,33 @@ async def handle_group_text_commands(update, context):
             )
         return True
 
-    # تحكم مالك البوت الأساسي باليوتيوب من داخل المجموعة فقط.
+    # إعداد اليوتيوب مستقل لكل مجموعة ويتحكم به مالك المجموعة.
     youtube_control = normalize_message(message.text or "")
     if youtube_control in ("تفعيل اليوتيوب", "تشغيل اليوتيوب"):
-        if not is_bot_owner(user.id):
-            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
             return True
-        data["settings"]["youtube_enabled"] = True
+        chat_data(chat.id)["youtube_enabled"] = True
         save_data()
-        await message.reply_text("✅ تم تفعيل اليوتيوب.")
+        await message.reply_text("✅ تم تفعيل اليوتيوب بهذه المجموعة.")
         return True
     if youtube_control in ("تعطيل اليوتيوب", "ايقاف اليوتيوب", "وقف اليوتيوب"):
-        if not is_bot_owner(user.id):
-            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
             return True
-        data["settings"]["youtube_enabled"] = False
+        chat_data(chat.id)["youtube_enabled"] = False
         save_data()
-        await message.reply_text("🔴 تم تعطيل اليوتيوب. رسائل يوت ستُتجاهل بصمت.")
+        await message.reply_text("🔴 تم تعطيل اليوتيوب بهذه المجموعة. رسائل يوت ستُتجاهل بصمت.")
         return True
     if youtube_control == "حالة اليوتيوب":
-        if not is_bot_owner(user.id):
-            await message.reply_text("⛔ هذا الأمر خاص بمالك البوت الأساسي.")
-            return True
-        enabled = data["settings"].get("youtube_enabled", True)
+        enabled = chat_data(chat.id).get("youtube_enabled", True)
         await message.reply_text(
-            "🟢 اليوتيوب مفعّل." if enabled else "🔴 اليوتيوب متوقف."
+            "🟢 اليوتيوب مفعّل بهذه المجموعة." if enabled else "🔴 اليوتيوب متوقف بهذه المجموعة."
         )
         return True
 
-    # الحسابات التي أوقف المالك تواصل نيكسوس معها لا تنفذ أوامر نيكسوس أيضاً.
-    if (
-        str(user.id) in data.get("settings", {}).get("nexus_silenced_users", {})
-        and not is_bot_owner(user.id)
-    ):
+    # قائمة تجاهل نيكسوس مستقلة لكل مجموعة.
+    if str(user.id) in chat_data(chat.id).get("nexus_silenced_users", {}):
         return True
 
     text = (message.text or "").strip()
@@ -2295,7 +2289,7 @@ async def handle_group_text_commands(update, context):
 
     # NEXUS CORE - المرحلة الأولى: فهم صيغ الكلام الطبيعي وتحويلها
     # إلى الأوامر الموجودة، مع إبقاء فحوص الصلاحيات داخل الدوال الأصلية.
-    # تحكم المالك بمن يتحدث معه نيكسوس، ويُحفظ على مستوى البوت.
+    # تحكم مالك المجموعة بمن يتحدث معه نيكسوس، ويُحفظ داخل بيانات مجموعته.
     nexus_control = re.fullmatch(
         r"\s*(?:يا\s+)?(?:نيكسوس|نكسوس)\s+"
         r"(لا\s+(?:تحچي|تحجي|تتكلم)|تجاهل|ارجع\s+(?:احچي|احجي|تكلم)|"
@@ -2304,23 +2298,20 @@ async def handle_group_text_commands(update, context):
         re.I,
     )
     if nexus_control:
-        if not is_bot_owner(user.id):
-            await message.reply_text("⛔ هذا التحكم خاص بمالك البوت.")
+        if not await is_group_owner(chat.id, user.id, context):
+            await message.reply_text("⛔ هذا التحكم خاص بمالك المجموعة.")
             return True
 
         action = normalize_message(nexus_control.group(1))
         username = nexus_control.group(2).lower()
-        silenced = data["settings"].setdefault("nexus_silenced_users", {})
+        silenced = chat_data(chat.id).setdefault("nexus_silenced_users", {})
         target_id = None
         target_name = username
 
-        for saved_chat in data.get("chats", {}).values():
-            for saved_id, activity in saved_chat.get("activity", {}).items():
-                if str(activity.get("username", "")).lower() == username:
-                    target_id = str(saved_id)
-                    target_name = activity.get("name") or username
-                    break
-            if target_id:
+        for saved_id, activity in chat_data(chat.id).get("activity", {}).items():
+            if str(activity.get("username", "")).lower() == username:
+                target_id = str(saved_id)
+                target_name = activity.get("name") or username
                 break
 
         if not target_id:
@@ -2977,7 +2968,7 @@ async def moderate(update, context):
     # قبل تسجيل النشاط أو تشغيل أي معالجة أخرى.
     if (
         re.match(r"^\s*يوت(?:\s|$)", text, re.I)
-        and not data["settings"].get("youtube_enabled", True)
+        and not chat_data(chat.id).get("youtube_enabled", True)
     ):
         return
 
