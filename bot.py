@@ -756,6 +756,7 @@ def protection_text(chat_id):
         lines.append(f"{'🟢' if info['locks'].get(key, False) else '🔴'} {label}")
     lines.append(f"{'🟢' if info.get('protection_enabled', True) else '🔴'} الحماية العامة")
     lines.append(f"{'🟢' if info.get('bad_words_enabled', True) else '🔴'} حماية الكلمات المسيئة")
+    lines.append(f"{'🟢' if info.get('bot_join_monitor', True) else '🔴'} مراقبة دخول البوتات")
     lines.append(f"حد الإنذارات قبل الكتم: {int(info.get('warning_limit', WARN_LIMIT))}")
     return "\n".join(lines)
 
@@ -860,8 +861,12 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
         return False
     role, remove = item
     if remove:
-        if not (await is_group_owner(chat_id, actor.id, context)
-                or await has_permission(chat_id, actor.id, "manage_roles", context)):
+        if role == "owner":
+            if not await is_group_owner(chat_id, actor.id, context):
+                await message.reply_text("⛔ عزل المالك خاص بالمالك نفسه أو مالك البوت الأساسي.")
+                return True
+        elif not (await is_group_owner(chat_id, actor.id, context)
+                  or await has_permission(chat_id, actor.id, "manage_roles", context)):
             await message.reply_text("⛔ ما عندك صلاحية عزل الرتب.")
             return True
         if role == "owner" and target.id == actor.id and not is_bot_owner(actor.id):
@@ -1052,6 +1057,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if role not in ROLE_ORDER:
             await query.answer("رتبة غير صحيحة.", show_alert=True)
             return
+        if role == "owner":
+            await query.answer("صلاحيات المالك كاملة وثابتة ولا يمكن تعطيلها.", show_alert=True)
+            return
         info = chat_data(chat_id)
         saved = info["role_permissions"].setdefault(role, dict(ROLE_DEFAULTS.get(role, {})))
         saved[permission] = not bool(saved.get(permission, False))
@@ -1196,7 +1204,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += ["", "للإضافة: رد على رسالة العضو واكتب استثناء الحماية.",
                   "للإزالة: رد على رسالته واكتب إلغاء استثناء الحماية."]
         await query.answer()
-        await query.edit_message_text("\\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"ap:{chat_id}")]]))
+        await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"ap:{chat_id}")]]))
         return
 
     if action.startswith("pw:"):
@@ -1302,13 +1310,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "ai_menu":
         await query.edit_message_text(
-            "🧠 مركز الذكاء الاصطناعي — نيكسوس\\n\\n"
+            "🧠 مركز الذكاء الاصطناعي — نيكسوس\n\n"
             "هذا القسم مخصص لكل إعدادات وميزات الذكاء الاصطناعي، "
-            "ونضيف إليه الميزات الجديدة مستقبلاً.\\n\\n"
+            "ونضيف إليه الميزات الجديدة مستقبلاً.\n\n"
             "⚙️ التحكم بذكاء المجموعة الحالية يتم من داخل المجموعة "
-            "بواسطة مالك المجموعة فقط:\\n"
-            "• تفعيل الذكاء\\n"
-            "• تعطيل الذكاء\\n\\n"
+            "بواسطة مالك المجموعة فقط:\n"
+            "• تفعيل الذكاء\n"
+            "• تعطيل الذكاء\n\n"
             "عند إيقافه تتوقف ردود نيكسوس الذكية فقط، "
             "وتبقى الحماية والإدارة والبحث في يوتيوب تعمل بشكل طبيعي.",
             reply_markup=back_keyboard(),
@@ -2147,7 +2155,7 @@ async def handle_group_text_commands(update, context):
             await message.reply_text("⛔ ما عندك صلاحية فتح لوحة الإدارة.")
         else:
             await message.reply_text(
-                "🛡️ الإدارة والحماية\\nاختار الرتبة أو قسم الحماية:",
+                "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
                 reply_markup=management_keyboard(chat.id),
             )
         return True
@@ -2614,7 +2622,7 @@ async def nexus_ai_reply(message, chat_id, user, text):
             .get("content", {})
             .get("parts", [])
         )
-        answer = "\\n".join(
+        answer = "\n".join(
             part.get("text", "") for part in parts if part.get("text")
         ).strip()
         if not answer:
@@ -2639,21 +2647,21 @@ async def welcome_new_members(update, context):
     chat = update.effective_chat
     if not message or not chat or not message.new_chat_members:
         return
-    if not chat_data(chat.id).get("welcome", True):
-        return
+    welcome_enabled = chat_data(chat.id).get("welcome", True)
     for member in message.new_chat_members:
         if member.is_bot:
             if chat_data(chat.id).get("bot_join_monitor", True):
                 log_action(chat.id, None, "دخول حساب بوت جديد", member)
                 await message.reply_text(
-                    f"🤖 دخل حساب بوت جديد: {member.full_name}\\n"
+                    f"🤖 دخل حساب بوت جديد: {member.full_name}\n"
                     "تم تسجيل دخوله في سجل المراقبة."
                 )
             continue
-        await message.reply_text(
-            f"أهلاً وسهلاً {member.first_name} 🌟\\n"
-            "نورت PARADOX 404!"
-        )
+        if welcome_enabled:
+            await message.reply_text(
+                f"أهلاً وسهلاً {member.first_name} 🌟\n"
+                "نورت PARADOX 404!"
+            )
 
 
 async def unmute_all(update, context):
