@@ -64,6 +64,82 @@ BAD_WORDS = ["كلب", "حمار", "غبي", "حقير", "تافه"]
 LINK_PATTERN = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/)", re.I)
 SONG_PATTERN = re.compile(r"^\s*يوت\s+(.+)$", re.I)
 
+
+ROLE_ORDER = ["owner", "deputy", "admin", "supervisor", "assistant", "observer"]
+ROLE_INFO = {
+    "owner": ("👑", "المالك"),
+    "deputy": ("💠", "نائب المالك"),
+    "admin": ("🛡️", "الإداري"),
+    "supervisor": ("🔰", "المشرف"),
+    "assistant": ("⚙️", "المساعد"),
+    "observer": ("👁️", "المراقب"),
+}
+ROLE_COMMANDS = {
+    "owner": [
+        ("رفع_مالك", "تعيين مالك جديد", "assign_owner"),
+        ("عزل_مالك", "سحب رتبة المالك", "assign_owner"),
+        ("رفع_نائب", "تعيين نائب المالك", "assign_roles"),
+        ("تعيين_إداري", "تعيين إداري", "assign_roles"),
+        ("تعيين_مشرف", "تعيين مشرف", "assign_roles"),
+        ("تعيين_مساعد", "تعيين مساعد", "assign_roles"),
+        ("تعيين_مراقب", "تعيين مراقب", "assign_roles"),
+        ("الصلاحيات", "عرض صلاحيات الرتب", "manage_permissions"),
+        ("منح_صلاحية", "منح صلاحية محددة", "manage_permissions"),
+        ("سحب_صلاحية", "سحب صلاحية محددة", "manage_permissions"),
+        ("إيقاف_البوت", "إيقاف البوت", "bot_control"),
+        ("تشغيل_البوت", "تشغيل البوت", "bot_control"),
+        ("سجل_الإدارة", "مراجعة العمليات الإدارية", "logs"),
+    ],
+    "deputy": [
+        ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
+        ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "mute"),
+        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "assign_roles"),
+        ("عزل_مشرف", "عزل مشرف عند التفويض", "assign_roles"),
+        ("الإنذارات", "مراجعة إنذارات الأعضاء", "warnings"),
+        ("إزالة_إنذار", "حذف إنذار", "warnings"),
+        ("تنظيف", "حذف الرسائل المخالفة", "delete"),
+        ("حالة_المجموعة", "عرض حالة المجموعة", "stats"),
+    ],
+    "admin": [
+        ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
+        ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "mute"),
+        ("طرد", "طرد عضو", "ban"), ("إنذار", "توجيه إنذار", "warnings"),
+        ("إزالة_إنذار", "إزالة إنذار", "warnings"), ("مسح", "حذف الرسائل", "delete"),
+        ("تثبيت", "تثبيت رسالة", "pin"), ("إلغاء_التثبيت", "إلغاء تثبيت رسالة", "pin"),
+        ("المخالفون", "عرض الأعضاء المخالفين", "stats"),
+    ],
+    "supervisor": [
+        ("إنذار", "إنذار عضو", "warnings"), ("كتم", "كتم عضو", "mute"),
+        ("فك_الكتم", "فك الكتم عند التفويض", "mute"), ("حذف", "حذف رسالة", "delete"),
+        ("طرد", "طرد عضو عند التفويض", "ban"),
+        ("معلومات_عضو", "عرض معلومات العضو", "stats"),
+        ("الإبلاغ", "إرسال بلاغ للإدارة", "report"),
+    ],
+    "assistant": [
+        ("مساعدة", "عرض المساعدة", "stats"),
+        ("معلومات_عضو", "معلومات العضو", "stats"),
+        ("الإبلاغ", "إبلاغ الإدارة", "report"),
+        ("تنبيه", "تنبيه الأعضاء", "report"),
+        ("قوانين", "عرض قوانين المجموعة", "stats"),
+        ("الترحيب", "عرض إعدادات الترحيب عند التفويض", "welcome"),
+    ],
+    "observer": [
+        ("مراقبة", "عرض حالة المجموعة", "stats"),
+        ("مراجعة_الإنذارات", "مراجعة الإنذارات", "warnings"),
+        ("سجل_المخالفات", "مشاهدة المخالفات", "logs"),
+        ("الإبلاغ", "رفع بلاغ للإدارة", "report"),
+        ("معلومات_عضو", "الاطلاع على معلومات العضو", "stats"),
+    ],
+}
+ROLE_DEFAULTS = {
+    "owner": {key: True for key in ("assign_owner", "assign_roles", "manage_permissions", "bot_control", "logs", "ban", "mute", "warnings", "delete", "pin", "stats", "protection", "admins", "report", "welcome", "manage_roles")},
+    "deputy": {key: True for key in ("ban", "mute", "warnings", "delete", "stats", "logs", "report", "manage_roles")},
+    "admin": {key: True for key in ("ban", "mute", "warnings", "delete", "pin", "stats", "protection", "report")},
+    "supervisor": {key: True for key in ("mute", "warnings", "delete", "stats", "report")},
+    "assistant": {key: True for key in ("stats", "report")},
+    "observer": {key: True for key in ("stats", "logs", "report")},
+}
+
 PERMISSIONS = {
     "protection": "الحماية",
     "mute": "الكتم وفك الكتم",
@@ -246,6 +322,16 @@ def chat_data(chat_id):
     info["locks"].setdefault("links", True)
     info["locks"].setdefault("spam", True)
     info.setdefault("admin_permissions", {})
+    info.setdefault("roles", {})
+    info.setdefault("role_permissions", {
+        role: dict(ROLE_DEFAULTS.get(role, {})) for role in ROLE_ORDER
+    })
+    for role in ROLE_ORDER:
+        info["role_permissions"].setdefault(role, dict(ROLE_DEFAULTS.get(role, {})))
+    info.setdefault("protection_exemptions", [])
+    info.setdefault("bad_words_enabled", True)
+    info.setdefault("protection_enabled", True)
+    info.setdefault("warning_limit", WARN_LIMIT)
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
     info.setdefault("nexus_ai_enabled", True)
@@ -392,23 +478,47 @@ async def get_member(chat_id, user_id, context):
         return None
 
 
+def assigned_role(chat_id, user_id):
+    record = chat_data(chat_id)["roles"].get(str(user_id), {})
+    return record.get("role") if isinstance(record, dict) else None
+
+
 async def is_group_owner(chat_id, user_id, context):
+    if is_bot_owner(user_id):
+        return True
     member = await get_member(chat_id, user_id, context)
-    return bool(member and member.status == "creator")
+    return bool(
+        (member and member.status == "creator")
+        or assigned_role(chat_id, user_id) == "owner"
+    )
 
 
 async def is_admin(chat_id, user_id, context):
     member = await get_member(chat_id, user_id, context)
-    return bool(member and member.status in ("administrator", "creator"))
+    return bool(
+        (member and member.status in ("administrator", "creator"))
+        or assigned_role(chat_id, user_id) in ROLE_ORDER
+        or is_bot_owner(user_id)
+    )
 
 
 async def has_permission(chat_id, user_id, permission, context):
     if await is_group_owner(chat_id, user_id, context):
         return True
+
+    info = chat_data(chat_id)
+    role = assigned_role(chat_id, user_id)
+    if role in ROLE_ORDER:
+        record = info["roles"].get(str(user_id), {})
+        overrides = record.get("overrides", {})
+        if permission in overrides:
+            return bool(overrides[permission])
+        return bool(info["role_permissions"].get(role, {}).get(permission, False))
+
     member = await get_member(chat_id, user_id, context)
     if not member or member.status != "administrator":
         return False
-    saved = chat_data(chat_id)["admin_permissions"].get(str(user_id))
+    saved = info["admin_permissions"].get(str(user_id))
     return bool(saved and saved.get(permission, False))
 
 
@@ -562,6 +672,249 @@ def permissions_keyboard(chat_id, target_id):
     return InlineKeyboardMarkup(rows)
 
 
+
+# =========================================================
+# PARADOX ROLE PANEL / PROTECTION DASHBOARD
+# =========================================================
+
+def management_keyboard(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👑 المالك", callback_data=f"ar:{chat_id}:owner"),
+         InlineKeyboardButton("💠 نائب المالك", callback_data=f"ar:{chat_id}:deputy")],
+        [InlineKeyboardButton("🛡️ الإداري", callback_data=f"ar:{chat_id}:admin"),
+         InlineKeyboardButton("🔰 المشرف", callback_data=f"ar:{chat_id}:supervisor")],
+        [InlineKeyboardButton("⚙️ المساعد", callback_data=f"ar:{chat_id}:assistant"),
+         InlineKeyboardButton("👁️ المراقب", callback_data=f"ar:{chat_id}:observer")],
+        [InlineKeyboardButton("🛡️ الحماية التلقائية", callback_data=f"ap:{chat_id}")],
+        [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"al:{chat_id}"),
+         InlineKeyboardButton("📊 الإحصائيات", callback_data=f"as:{chat_id}")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+    ])
+
+
+def role_detail_keyboard(chat_id, role):
+    rows = []
+    commands = ROLE_COMMANDS[role]
+    defaults = chat_data(chat_id)["role_permissions"].get(role, {})
+    for index, (command, description, permission) in enumerate(commands):
+        enabled = bool(defaults.get(permission, False))
+        mark = "✅" if enabled else "❌"
+        rows.append([InlineKeyboardButton(
+            f"{mark} /{command} — {description}",
+            callback_data=f"rp:{chat_id}:{role}:{permission}",
+        )])
+    rows.append([
+        InlineKeyboardButton("👥 أعضاء الرتبة", callback_data=f"ru:{chat_id}:{role}"),
+        InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def role_detail_text(chat_id, role):
+    emoji, title = ROLE_INFO[role]
+    lines = [f"{emoji} {title}", "", "الصلاحيات والأوامر:"]
+    for command, description, permission in ROLE_COMMANDS[role]:
+        enabled = chat_data(chat_id)["role_permissions"].get(role, {}).get(permission, False)
+        mark = "مفعّل" if enabled else "معطّل"
+        lines.append(f"/{command} — {description} [{mark}]")
+    lines += ["", "اضغط على الأمر لتفعيل أو تعطيل صلاحيته الافتراضية لهذه الرتبة."]
+    return "\n".join(lines)
+
+
+def protection_keyboard(chat_id):
+    info = chat_data(chat_id)
+    rows = []
+    for key, label in LOCK_TYPES.items():
+        enabled = bool(info["locks"].get(key, False))
+        rows.append([InlineKeyboardButton(
+            f"{'🟢' if enabled else '🔴'} {label}",
+            callback_data=f"pl:{chat_id}:{key}",
+        )])
+    for key, label in (("protection_enabled", "الحماية العامة"), ("bad_words_enabled", "حماية الكلمات المسيئة")):
+        enabled = bool(info.get(key, True))
+        rows.append([InlineKeyboardButton(
+            f"{'🟢' if enabled else '🔴'} {label}",
+            callback_data=f"ps:{chat_id}:{key}",
+        )])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def protection_text(chat_id):
+    info = chat_data(chat_id)
+    lines = ["🛡️ إعدادات الحماية التلقائية", "", "اضغط على أي حماية لتشغيلها أو إيقافها:"]
+    for key, label in LOCK_TYPES.items():
+        lines.append(f"{'🟢' if info['locks'].get(key, False) else '🔴'} {label}")
+    lines.append(f"{'🟢' if info.get('protection_enabled', True) else '🔴'} الحماية العامة")
+    lines.append(f"{'🟢' if info.get('bad_words_enabled', True) else '🔴'} حماية الكلمات المسيئة")
+    lines.append(f"حد الإنذارات قبل الكتم: {int(info.get('warning_limit', WARN_LIMIT))}")
+    return "\n".join(lines)
+
+
+def role_users_keyboard(chat_id, role):
+    info = chat_data(chat_id)
+    rows = []
+    members = [
+        (uid, record) for uid, record in info["roles"].items()
+        if isinstance(record, dict) and record.get("role") == role
+    ]
+    for uid, record in members[:30]:
+        name = record.get("name") or uid
+        rows.append([InlineKeyboardButton(
+            f"👤 {name[:35]}",
+            callback_data=f"ruser:{chat_id}:{uid}",
+        )])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"ar:{chat_id}:{role}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def user_permission_keyboard(chat_id, user_id):
+    info = chat_data(chat_id)
+    record = info["roles"].get(str(user_id), {})
+    role = record.get("role")
+    rows = []
+    if role not in ROLE_ORDER:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")]])
+    all_permissions = list(dict.fromkeys(p for _, _, p in ROLE_COMMANDS[role]))
+    for permission in all_permissions:
+        default = bool(info["role_permissions"].get(role, {}).get(permission, False))
+        current = bool(record.get("overrides", {}).get(permission, default))
+        rows.append([InlineKeyboardButton(
+            f"{'✅' if current else '❌'} {permission}",
+            callback_data=f"up:{chat_id}:{user_id}:{permission}",
+        )])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"ru:{chat_id}:{role}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def can_manage_panel(chat_id, user_id, context):
+    return (
+        await is_group_owner(chat_id, user_id, context)
+        or await has_permission(chat_id, user_id, "protection", context)
+        or await has_permission(chat_id, user_id, "stats", context)
+    )
+
+
+async def show_role_assignment(message, chat_id, actor, target, role, context):
+    if role not in ROLE_ORDER:
+        return
+    if target.is_bot or target.id == actor.id:
+        await message.reply_text("⛔ ما أگدر أعيّن نفسك أو حساب بوت كرتبة إدارية.")
+        return
+    if role == "owner" and not (is_bot_owner(actor.id) or await is_group_owner(chat_id, actor.id, context)):
+        await message.reply_text("⛔ تعيين المالك خاص بمالك البوت أو منشئ المجموعة.")
+        return
+    if not (await is_group_owner(chat_id, actor.id, context)
+            or await has_permission(chat_id, actor.id, "manage_roles", context)):
+        await message.reply_text("⛔ ما عندك صلاحية توزيع الرتب.")
+        log_action(chat_id, actor, "محاولة غير مصرح بها لتعيين رتبة", target)
+        return
+
+    actor_role = "owner" if await is_group_owner(chat_id, actor.id, context) else assigned_role(chat_id, actor.id)
+    target_role = assigned_role(chat_id, target.id)
+    actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
+    target_level = ROLE_ORDER.index(target_role) if target_role in ROLE_ORDER else 99
+    new_level = ROLE_ORDER.index(role)
+    if actor_level > new_level or (target_role in ROLE_ORDER and actor_level >= target_level):
+        await message.reply_text("⛔ ما تگدر تمنح رتبة أعلى من رتبتك أو تعدّل رتبة مساوية/أعلى منك.")
+        return
+
+    info = chat_data(chat_id)
+    info["roles"][str(target.id)] = {
+        "role": role,
+        "name": target.full_name,
+        "assigned_by": actor.id,
+        "assigned_at": int(time.time()),
+        "overrides": info["roles"].get(str(target.id), {}).get("overrides", {}),
+    }
+    save_data()
+    emoji, title = ROLE_INFO[role]
+    await message.reply_text(f"✅ تم تعيين {target.full_name} برتبة {emoji} {title}.")
+    log_action(chat_id, actor, f"تعيين رتبة: {title}", target)
+
+
+async def handle_role_assignment_command(message, chat_id, actor, context, command):
+    target = await reply_target(message)
+    if not target:
+        await message.reply_text("رد على رسالة الشخص ثم اكتب أمر تعيين أو عزل الرتبة.")
+        return True
+    normalized = normalize_message(command).replace("_", " ")
+    mapping = {
+        "رفع مالك": ("owner", False), "عزل مالك": ("owner", True),
+        "رفع نائب": ("deputy", False), "تعيين نائب": ("deputy", False),
+        "تعيين اداري": ("admin", False), "تعيين مشرف": ("supervisor", False),
+        "رفع مشرف": ("supervisor", False), "عزل مشرف": ("supervisor", True),
+        "تعيين مساعد": ("assistant", False), "تعيين مراقب": ("observer", False),
+    }
+    item = mapping.get(normalized)
+    if not item:
+        return False
+    role, remove = item
+    if remove:
+        if not (await is_group_owner(chat_id, actor.id, context)
+                or await has_permission(chat_id, actor.id, "manage_roles", context)):
+            await message.reply_text("⛔ ما عندك صلاحية عزل الرتب.")
+            return True
+        if role == "owner" and target.id == actor.id and not is_bot_owner(actor.id):
+            await message.reply_text("⛔ منشئ المجموعة لا يمكن عزله من رتبته الأصلية.")
+            return True
+        info = chat_data(chat_id)
+        old = info["roles"].get(str(target.id), {})
+        if old.get("role") != role:
+            await message.reply_text("ℹ️ هذا الشخص لا يحمل هذه الرتبة داخل PARADOX 404.")
+            return True
+        info["roles"].pop(str(target.id), None)
+        save_data()
+        await message.reply_text(f"✅ تم سحب رتبة {ROLE_INFO[role][1]} من {target.full_name}.")
+        log_action(chat_id, actor, f"سحب رتبة: {ROLE_INFO[role][1]}", target)
+    else:
+        await show_role_assignment(message, chat_id, actor, target, role, context)
+    return True
+
+
+async def render_group_stats(chat_id, context):
+    info = chat_data(chat_id)
+    try:
+        member_count = await context.bot.get_chat_member_count(chat_id)
+    except TelegramError:
+        member_count = "غير متاح"
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        telegram_admins = len(admins)
+    except TelegramError:
+        telegram_admins = "غير متاح"
+    roles_count = {role: sum(1 for item in info["roles"].values() if isinstance(item, dict) and item.get("role") == role) for role in ROLE_ORDER}
+    warning_count = sum(int(v) for v in info["warnings"].values())
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    today_logs = sum(1 for item in info["logs"] if time.strftime("%Y-%m-%d", time.localtime(item.get("time", 0))) == today)
+    return (
+        "📊 إحصائيات PARADOX 404\n\n"
+        f"👥 أعضاء المجموعة: {member_count}\n"
+        f"🛡️ مشرفو تيليجرام: {telegram_admins}\n"
+        f"👑 المالكين: {roles_count['owner']}\n"
+        f"💠 النواب: {roles_count['deputy']}\n"
+        f"🛡️ الإداريون: {roles_count['admin']}\n"
+        f"🔰 المشرفون: {roles_count['supervisor']}\n"
+        f"⚙️ المساعدون: {roles_count['assistant']}\n"
+        f"👁️ المراقبون: {roles_count['observer']}\n"
+        f"⚠️ مجموع الإنذارات الحالية: {warning_count}\n"
+        f"📋 العمليات المسجلة اليوم: {today_logs}\n"
+        f"🗑️ الرسائل المتتبعة: {len(info.get('message_history', []))}"
+    )
+
+
+async def render_admin_logs(chat_id):
+    logs = chat_data(chat_id)["logs"][-15:]
+    if not logs:
+        return "📋 ماكو عمليات إدارية مسجلة بعد."
+    lines = ["📋 آخر عمليات الإدارة:"]
+    for item in reversed(logs):
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.get("time", 0)))
+        target = f" ← {item.get('target')}" if item.get("target") else ""
+        lines.append(f"• {when} | {item.get('actor', 'النظام')}: {item.get('action', '')}{target}")
+    return "\n".join(lines)
+
+
 # =========================================================
 # START AND CALLBACKS
 # =========================================================
@@ -644,6 +997,207 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("تم إغلاق إعدادات الصلاحيات.")
         return
 
+    if action.startswith("mg:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("معرّف مجموعة غير صحيح.", show_alert=True)
+            return
+        if not await can_manage_panel(chat_id, user.id, context):
+            await query.answer("ما عندك صلاحية إدارة هذه المجموعة.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
+            reply_markup=management_keyboard(chat_id),
+        )
+        return
+
+    if action.startswith("ar:"):
+        try:
+            _, raw_chat, role = action.split(":")
+            chat_id = int(raw_chat)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if role not in ROLE_ORDER or not await can_manage_panel(chat_id, user.id, context):
+            await query.answer("ما عندك صلاحية عرض هذه الرتبة.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            role_detail_text(chat_id, role),
+            reply_markup=role_detail_keyboard(chat_id, role),
+        )
+        return
+
+    if action.startswith("rp:"):
+        try:
+            _, raw_chat, role, permission = action.split(":")
+            chat_id = int(raw_chat)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await is_group_owner(chat_id, user.id, context):
+            await query.answer("تعديل صلاحيات الرتب خاص بالمالك.", show_alert=True)
+            return
+        if role not in ROLE_ORDER:
+            await query.answer("رتبة غير صحيحة.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        saved = info["role_permissions"].setdefault(role, dict(ROLE_DEFAULTS.get(role, {})))
+        saved[permission] = not bool(saved.get(permission, False))
+        save_data()
+        log_action(chat_id, user, f"تعديل صلاحية رتبة {ROLE_INFO[role][1]}: {permission}")
+        await query.answer("تم تحديث صلاحية الرتبة.")
+        await query.edit_message_text(role_detail_text(chat_id, role), reply_markup=role_detail_keyboard(chat_id, role))
+        return
+
+    if action.startswith("ru:"):
+        try:
+            _, raw_chat, role = action.split(":")
+            chat_id = int(raw_chat)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if role not in ROLE_ORDER or not await can_manage_panel(chat_id, user.id, context):
+            await query.answer("ما عندك صلاحية.", show_alert=True)
+            return
+        await query.answer()
+        members = [record.get("name", uid) for uid, record in chat_data(chat_id)["roles"].items() if isinstance(record, dict) and record.get("role") == role]
+        text = f"👥 أعضاء رتبة {ROLE_INFO[role][1]}\n\n" + ("\n".join(f"• {name}" for name in members[:30]) if members else "ماكو أشخاص معينين بهذه الرتبة.")
+        text += "\n\nلإضافة شخص: رد على رسالته بأمر تعيين الرتبة."
+        await query.edit_message_text(text, reply_markup=role_users_keyboard(chat_id, role))
+        return
+
+    if action.startswith("ruser:"):
+        try:
+            _, raw_chat, raw_user = action.split(":")
+            chat_id, target_id = int(raw_chat), int(raw_user)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await is_group_owner(chat_id, user.id, context):
+            await query.answer("تعديل الصلاحيات الفردية خاص بالمالك.", show_alert=True)
+            return
+        record = chat_data(chat_id)["roles"].get(str(target_id), {})
+        await query.answer()
+        await query.edit_message_text(
+            f"👤 صلاحيات {record.get('name', target_id)}\nفعّل أو عطّل صلاحيات هذا الشخص بشكل مستقل:",
+            reply_markup=user_permission_keyboard(chat_id, target_id),
+        )
+        return
+
+    if action.startswith("up:"):
+        try:
+            _, raw_chat, raw_user, permission = action.split(":")
+            chat_id, target_id = int(raw_chat), int(raw_user)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await is_group_owner(chat_id, user.id, context):
+            await query.answer("تعديل الصلاحيات الفردية خاص بالمالك.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        record = info["roles"].get(str(target_id), {})
+        role = record.get("role")
+        if role not in ROLE_ORDER:
+            await query.answer("لم تعد لهذا العضو رتبة محفوظة.", show_alert=True)
+            return
+        overrides = record.setdefault("overrides", {})
+        current = bool(overrides.get(permission, info["role_permissions"].get(role, {}).get(permission, False)))
+        new_value = not current
+        default_value = bool(info["role_permissions"].get(role, {}).get(permission, False))
+        if new_value == default_value:
+            overrides.pop(permission, None)
+        else:
+            overrides[permission] = new_value
+        save_data()
+        log_action(chat_id, user, f"تعديل صلاحية فردية: {permission}", None)
+        await query.answer("تم تحديث صلاحية الشخص.")
+        await query.edit_message_reply_markup(reply_markup=user_permission_keyboard(chat_id, target_id))
+        return
+
+    if action.startswith("ap:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("هذا القسم خاص بالمخوّلين للحماية.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
+        return
+
+    if action.startswith("pl:"):
+        try:
+            _, raw_chat, lock_name = action.split(":")
+            chat_id = int(raw_chat)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
+            return
+        if lock_name not in LOCK_TYPES:
+            await query.answer("نوع حماية غير معروف.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        info["locks"][lock_name] = not bool(info["locks"].get(lock_name, False))
+        save_data()
+        log_action(chat_id, user, f"تغيير حماية: {LOCK_TYPES[lock_name]}")
+        await query.answer("تم تحديث الحماية.")
+        await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
+        return
+
+    if action.startswith("ps:"):
+        try:
+            _, raw_chat, setting = action.split(":")
+            chat_id = int(raw_chat)
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
+            return
+        if setting not in ("protection_enabled", "bad_words_enabled"):
+            await query.answer("إعداد غير معروف.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        info[setting] = not bool(info.get(setting, True))
+        save_data()
+        log_action(chat_id, user, f"تغيير إعداد الحماية: {setting}")
+        await query.answer("تم تحديث الإعداد.")
+        await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
+        return
+
+    if action.startswith("al:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "logs", context):
+            await query.answer("ما عندك صلاحية عرض السجل.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(render_admin_logs(chat_id), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")]]))
+        return
+
+    if action.startswith("as:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "stats", context):
+            await query.answer("ما عندك صلاحية عرض الإحصائيات.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(await render_group_stats(chat_id, context), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")]]))
+        return
+
     owner_actions = (
         "force_menu", "force_activate", "force_disable", "force_status",
     )
@@ -671,23 +1225,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif action == "management":
-        await query.edit_message_text(
-            "🛡️ الحماية والإدارة\n\n"
-            "قفل الروابط / فتح الروابط\n"
-            "قفل الصور / فتح الصور\n"
-            "قفل الفيديو / فتح الفيديو\n"
-            "قفل الملفات / فتح الملفات\n"
-            "قفل التوجيه / فتح التوجيه\n"
-            "قفل الملصقات / فتح الملصقات\n"
-            "قفل الصوت / فتح الصوت\n"
-            "قفل الاستطلاعات / فتح الاستطلاعات\n"
-            "قفل السبام / فتح السبام\n"
-            "قفل المنشنات / فتح المنشنات\n\n"
-            "الحماية التلقائية: حذف الروابط والألفاظ، "
-            "وكشف الرسائل المتشابهة والإغراق، "
-            "وإنذار ثم كتم بعد 4 إنذارات.",
-            reply_markup=back_keyboard(),
-        )
+        if query.message and query.message.chat.type == ChatType.PRIVATE:
+            rows = []
+            for saved_chat_id, saved_info in data.get("chats", {}).items():
+                title = (saved_info.get("title") or saved_chat_id)[:45]
+                rows.append([InlineKeyboardButton(
+                    f"👥 {title}", callback_data=f"mg:{saved_chat_id}"
+                )])
+            rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+            await query.edit_message_text(
+                "🛡️ الإدارة والحماية\n\nاختار المجموعة اللي تريد تديرها:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        else:
+            chat_id = query.message.chat.id
+            if not await can_manage_panel(chat_id, user.id, context):
+                await query.answer("ما عندك صلاحية فتح لوحة الإدارة.", show_alert=True)
+                return
+            await query.edit_message_text(
+                "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
+                reply_markup=management_keyboard(chat_id),
+            )
 
     elif action == "statistics":
         await query.edit_message_text(
@@ -1461,6 +2019,29 @@ async def handle_group_text_commands(update, context):
     ):
         return False
 
+    panel_command = normalize_message(message.text or "").strip()
+    if panel_command in ("الادارة والحماية", "لوحة الادارة", "ادارة وحماية"):
+        if not await can_manage_panel(chat.id, user.id, context):
+            await message.reply_text("⛔ ما عندك صلاحية فتح لوحة الإدارة والحماية.")
+        else:
+            await message.reply_text(
+                "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
+                reply_markup=management_keyboard(chat.id),
+            )
+        return True
+
+    role_command_text = (message.text or "").strip().lstrip("/")
+    role_command_normalized = normalize_message(role_command_text).replace("_", " ")
+    if role_command_normalized in (
+        "رفع مالك", "عزل مالك", "رفع نائب", "تعيين نائب",
+        "تعيين اداري", "تعيين مشرف", "رفع مشرف", "عزل مشرف",
+        "تعيين مساعد", "تعيين مراقب",
+    ):
+        await handle_role_assignment_command(
+            message, chat.id, user, context, role_command_text
+        )
+        return True
+
     # تحكم مالك البوت الأساسي باليوتيوب من داخل المجموعة فقط.
     youtube_control = normalize_message(message.text or "")
     if youtube_control in ("تفعيل اليوتيوب", "تشغيل اليوتيوب"):
@@ -1788,12 +2369,13 @@ async def issue_warning(message, chat_id, user, context, reason):
     uid = str(user.id)
     current = min(
         int(info["warnings"].get(uid, 0)) + 1,
-        WARN_LIMIT,
+        int(info.get("warning_limit", WARN_LIMIT)),
     )
+    warning_limit = int(info.get("warning_limit", WARN_LIMIT))
     info["warnings"][uid] = current
     save_data()
 
-    if current >= WARN_LIMIT:
+    if current >= warning_limit:
         if uid in info["muted"]:
             return
         try:
@@ -1801,7 +2383,7 @@ async def issue_warning(message, chat_id, user, context, reason):
             info["muted"][uid] = {"name": user.full_name}
             save_data()
             notice = (
-                f"🔇 تم كتم {user.first_name} بعد {WARN_LIMIT} إنذارات.\n"
+                f"🔇 تم كتم {user.first_name} بعد {warning_limit} إنذارات.\n"
                 f"السبب الأخير: {reason}"
             )
             log_action(chat_id, None, "كتم تلقائي بعد الإنذارات", user)
@@ -1813,7 +2395,7 @@ async def issue_warning(message, chat_id, user, context, reason):
             )
     else:
         notice = (
-            f"⚠️ تحذير {current} من {WARN_LIMIT} لـ {user.first_name}.\n"
+            f"⚠️ تحذير {current} من {warning_limit} لـ {user.first_name}.\n"
             f"السبب: {reason}"
         )
 
@@ -2021,6 +2603,7 @@ async def moderate(update, context):
         return
 
     track_group_message(message)
+    chat_data(chat.id)["title"] = chat.title or str(chat.id)
     await count_activity(chat.id, user)
 
     if await handle_group_text_commands(update, context):
@@ -2042,6 +2625,9 @@ async def moderate(update, context):
         return
 
     locks = chat_data(chat.id)["locks"]
+    if not chat_data(chat.id).get("protection_enabled", True):
+        await nexus_ai_reply(message, chat.id, user, text)
+        return
     blocked = None
 
     if locks.get("photos") and message.photo:
@@ -2091,7 +2677,7 @@ async def moderate(update, context):
             )
             return
 
-    if contains_bad_word(text):
+    if locks.get("protection_enabled", True) and chat_data(chat.id).get("protection_enabled", True) and chat_data(chat.id).get("bad_words_enabled", True) and contains_bad_word(text):
         try:
             await message.delete()
         except TelegramError:
