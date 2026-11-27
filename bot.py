@@ -162,6 +162,7 @@ LOCK_TYPES = {
     "polls": "الاستطلاعات",
     "spam": "الإغراق والتكرار",
     "mentions": "المنشنات الجماعية",
+    "bots": "مراقبة دخول البوتات",
 }
 
 DEFAULT_DATA = {
@@ -330,6 +331,8 @@ def chat_data(chat_id):
         info["role_permissions"].setdefault(role, dict(ROLE_DEFAULTS.get(role, {})))
     info.setdefault("protection_exemptions", [])
     info.setdefault("bad_words_enabled", True)
+    info.setdefault("bot_join_monitor", True)
+    info.setdefault("allowed_links", [])
     info.setdefault("protection_enabled", True)
     info.setdefault("warning_limit", WARN_LIMIT)
     info.setdefault("logs", [])
@@ -495,9 +498,10 @@ async def is_group_owner(chat_id, user_id, context):
 
 async def is_admin(chat_id, user_id, context):
     member = await get_member(chat_id, user_id, context)
+    role = assigned_role(chat_id, user_id)
     return bool(
         (member and member.status in ("administrator", "creator"))
-        or assigned_role(chat_id, user_id) in ROLE_ORDER
+        or role in ("owner", "deputy", "admin")
         or is_bot_owner(user_id)
     )
 
@@ -730,12 +734,16 @@ def protection_keyboard(chat_id):
             f"{'🟢' if enabled else '🔴'} {label}",
             callback_data=f"pl:{chat_id}:{key}",
         )])
-    for key, label in (("protection_enabled", "الحماية العامة"), ("bad_words_enabled", "حماية الكلمات المسيئة")):
+    for key, label in (("protection_enabled", "الحماية العامة"), ("bad_words_enabled", "حماية الكلمات المسيئة"), ("bot_join_monitor", "مراقبة دخول البوتات")):
         enabled = bool(info.get(key, True))
         rows.append([InlineKeyboardButton(
             f"{'🟢' if enabled else '🔴'} {label}",
             callback_data=f"ps:{chat_id}:{key}",
         )])
+    rows.append([
+        InlineKeyboardButton("👥 الاستثناءات", callback_data=f"pe:{chat_id}"),
+        InlineKeyboardButton("⚠️ حد الإنذارات", callback_data=f"pw:{chat_id}"),
+    ])
     rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"mg:{chat_id}")])
     return InlineKeyboardMarkup(rows)
 
@@ -1161,7 +1169,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await has_permission(chat_id, user.id, "protection", context):
             await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
             return
-        if setting not in ("protection_enabled", "bad_words_enabled"):
+        if setting not in ("protection_enabled", "bad_words_enabled", "bot_join_monitor"):
             await query.answer("إعداد غير معروف.", show_alert=True)
             return
         info = chat_data(chat_id)
@@ -1169,6 +1177,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_data()
         log_action(chat_id, user, f"تغيير إعداد الحماية: {setting}")
         await query.answer("تم تحديث الإعداد.")
+        await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
+        return
+
+    if action.startswith("pe:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية عرض الاستثناءات.", show_alert=True)
+            return
+        ids = chat_data(chat_id).get("protection_exemptions", [])
+        lines = ["👥 استثناءات الحماية", "", "الأعضاء المستثنون من فحوص الحماية التلقائية:"]
+        lines += [f"• {uid}" for uid in ids[:50]] if ids else ["ماكو استثناءات حالياً."]
+        lines += ["", "للإضافة: رد على رسالة العضو واكتب استثناء الحماية.",
+                  "للإزالة: رد على رسالته واكتب إلغاء استثناء الحماية."]
+        await query.answer()
+        await query.edit_message_text("\\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data=f"ap:{chat_id}")]]))
+        return
+
+    if action.startswith("pw:"):
+        try:
+            chat_id = int(action.split(":", 1)[1])
+        except ValueError:
+            await query.answer("بيانات غير صحيحة.", show_alert=True)
+            return
+        if not await has_permission(chat_id, user.id, "protection", context):
+            await query.answer("ما عندك صلاحية تعديل حد الإنذارات.", show_alert=True)
+            return
+        info = chat_data(chat_id)
+        current = int(info.get("warning_limit", WARN_LIMIT))
+        info["warning_limit"] = 3 if current >= 5 else current + 1
+        save_data()
+        log_action(chat_id, user, f"تغيير حد الإنذارات إلى {info['warning_limit']}")
+        await query.answer(f"حد الإنذارات: {info['warning_limit']}")
         await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
         return
 
@@ -2030,16 +2074,43 @@ async def handle_group_text_commands(update, context):
             )
         return True
 
-    role_command_text = (message.text or "").strip().lstrip("/")
-    role_command_normalized = normalize_message(role_command_text).replace("_", " ")
-    if role_command_normalized in (
-        "رفع مالك", "عزل مالك", "رفع نائب", "تعيين نائب",
-        "تعيين اداري", "تعيين مشرف", "رفع مشرف", "عزل مشرف",
-        "تعيين مساعد", "تعيين مراقب",
-    ):
-        await handle_role_assignment_command(
-            message, chat.id, user, context, role_command_text
-        )
+    role_command_raw = (message.text or "").strip()
+    # أوامر تعيين الرتب الجديدة بصيغة /تعيين_مشرف؛
+    # نترك صيغة "رفع مشرف" القديمة تعمل كترقية مشرف تيليجرام.
+    if role_command_raw.startswith("/") and "_" in role_command_raw:
+        role_command_text = role_command_raw.lstrip("/")
+        role_command_normalized = normalize_message(role_command_text)
+        if role_command_normalized in (
+            "رفع مالك", "عزل مالك", "رفع نائب", "تعيين نائب",
+            "تعيين اداري", "تعيين مشرف", "رفع مشرف", "عزل مشرف",
+            "تعيين مساعد", "تعيين مراقب",
+        ):
+            await handle_role_assignment_command(
+                message, chat.id, user, context, role_command_text
+            )
+            return True
+
+    if panel_command in ("استثناء الحماية", "الغاء استثناء الحماية", "إلغاء استثناء الحماية"):
+        if not await has_permission(chat.id, user.id, "protection", context):
+            await message.reply_text("⛔ ما عندك صلاحية إدارة استثناءات الحماية.")
+            return True
+        target = await reply_target(message)
+        if not target:
+            await message.reply_text("رد على رسالة العضو واكتب استثناء الحماية أو إلغاء استثناء الحماية.")
+            return True
+        exemptions = chat_data(chat.id)["protection_exemptions"]
+        if panel_command == "استثناء الحماية":
+            if str(target.id) not in exemptions:
+                exemptions.append(str(target.id))
+            reply_text = f"✅ تم استثناء {target.full_name} من الحماية التلقائية."
+            action_name = "إضافة استثناء حماية"
+        else:
+            exemptions[:] = [uid for uid in exemptions if uid != str(target.id)]
+            reply_text = f"✅ تم إلغاء استثناء {target.full_name}."
+            action_name = "إلغاء استثناء حماية"
+        save_data()
+        await message.reply_text(reply_text)
+        log_action(chat.id, user, action_name, target)
         return True
 
     # تحكم مالك البوت الأساسي باليوتيوب من داخل المجموعة فقط.
@@ -2390,7 +2461,7 @@ async def issue_warning(message, chat_id, user, context, reason):
         except TelegramError:
             logger.exception("Automatic mute failed")
             notice = (
-                f"⚠️ وصل {user.first_name} إلى {WARN_LIMIT} إنذارات، "
+                f"⚠️ وصل {user.first_name} إلى {warning_limit} إنذارات، "
                 "لكن تعذر كتمه. تأكد من صلاحيات البوت."
             )
     else:
@@ -2532,11 +2603,18 @@ async def welcome_new_members(update, context):
     if not chat_data(chat.id).get("welcome", True):
         return
     for member in message.new_chat_members:
-        if not member.is_bot:
-            await message.reply_text(
-                f"أهلاً وسهلاً {member.first_name} 🌟\n"
-                "نورت PARADOX 404!"
-            )
+        if member.is_bot:
+            if chat_data(chat.id).get("bot_join_monitor", True):
+                log_action(chat.id, None, "دخول حساب بوت جديد", member)
+                await message.reply_text(
+                    f"🤖 دخل حساب بوت جديد: {member.full_name}\\n"
+                    "تم تسجيل دخوله في سجل المراقبة."
+                )
+            continue
+        await message.reply_text(
+            f"أهلاً وسهلاً {member.first_name} 🌟\\n"
+            "نورت PARADOX 404!"
+        )
 
 
 async def unmute_all(update, context):
@@ -2625,6 +2703,9 @@ async def moderate(update, context):
         return
 
     locks = chat_data(chat.id)["locks"]
+    if str(user.id) in chat_data(chat.id).get("protection_exemptions", []):
+        await nexus_ai_reply(message, chat.id, user, text)
+        return
     if not chat_data(chat.id).get("protection_enabled", True):
         await nexus_ai_reply(message, chat.id, user, text)
         return
