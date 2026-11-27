@@ -511,6 +511,7 @@ def main_menu(user_id=None):
             InlineKeyboardButton("👮 صلاحيات", callback_data="permissions_help"),
             InlineKeyboardButton("📋 الأوامر", callback_data="commands_help"),
         ],
+        [InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="ai_menu")],
     ]
     if user_id is not None and is_bot_owner(user_id):
         rows.append([InlineKeyboardButton(
@@ -681,6 +682,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 الإحصائيات والقوائم\n\n"
             "المتفاعلين\nالمشرفون\nالمالكين\n"
             "المكتومين\nالمحظورين\nالمقيدين\nسجل الإدارة",
+            reply_markup=back_keyboard(),
+        )
+
+    elif action == "ai_menu":
+        await query.edit_message_text(
+            "🧠 مركز الذكاء الاصطناعي — نيكسوس\\n\\n"
+            "هذا القسم مخصص لكل إعدادات وميزات الذكاء الاصطناعي، "
+            "ونضيف إليه الميزات الجديدة مستقبلاً.\\n\\n"
+            "⚙️ التحكم بذكاء المجموعة الحالية يتم من داخل المجموعة "
+            "بواسطة مالك المجموعة فقط:\\n"
+            "• تفعيل الذكاء\\n"
+            "• تعطيل الذكاء\\n\\n"
+            "عند إيقافه تتوقف ردود نيكسوس الذكية فقط، "
+            "وتبقى الحماية والإدارة والبحث في يوتيوب تعمل بشكل طبيعي.",
             reply_markup=back_keyboard(),
         )
 
