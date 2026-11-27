@@ -4249,6 +4249,23 @@ def games_keyboard():
          InlineKeyboardButton("⭐ نقاطي", callback_data="game:points")],
     ])
 
+async def delete_game_win_message(sent_message):
+    """يحذف رسالة الفوز بعد 15 ثانية."""
+    await asyncio.sleep(15)
+    try:
+        await sent_message.delete()
+    except TelegramError:
+        logger.exception("Could not delete temporary game win message")
+
+
+async def send_game_win_message(message, points, context):
+    """رسالة فوز موحدة لكل الألعاب، مع حذف تلقائي بعد 15 ثانية."""
+    sent = await message.reply_text(
+        f"🎉 مبروك! فزت وحصلت على {points} نقطة ⭐"
+    )
+    context.application.create_task(delete_game_win_message(sent))
+
+
 def game_score(chat_id, user, points=1):
     scores = chat_data(chat_id)["game_scores"]
     record = scores.setdefault(str(user.id), {"name": user.full_name, "points": 0, "wins": 0})
@@ -4435,10 +4452,7 @@ async def handle_game_text(message, chat_id, user, text, context):
             game_score(chat_id, user, 3)
             info["game_state"] = None
             save_data()
-            await message.reply_text(
-                f"🎉 أحسنت {user.first_name}! إجابة صحيحة وربحت 3 نقاط ⭐\\n\\n"
-                + game_leaderboard(chat_id)
-            )
+            await send_game_win_message(message, 3, context)
         return True
     if kind == "number":
         if not guess.isdigit():
@@ -4449,10 +4463,7 @@ async def handle_game_text(message, chat_id, user, text, context):
             game_score(chat_id, user, 3)
             info["game_state"] = None
             save_data()
-            await message.reply_text(
-                f"🎉 أحسنت {user.first_name}! خمنت الرقم الصحيح وربحت 3 نقاط ⭐\\n\\n"
-                + game_leaderboard(chat_id)
-            )
+            await send_game_win_message(message, 3, context)
         elif 1 <= picked <= 20:
             hint = "أعلى ⬆️" if picked < target_number else "أقل ⬇️"
             await message.reply_text(f"مو هذا الرقم، جرّب رقم {hint}.")
@@ -4463,7 +4474,7 @@ async def handle_game_text(message, chat_id, user, text, context):
         game_score(chat_id, user, 3 if kind == "detective" else 2)
         info["game_state"] = None
         save_data()
-        await message.reply_text(f"🎉 أحسنت {user.first_name}! إجابة صحيحة. ربحت {'3' if kind == 'detective' else '2'} نقاط ⭐\n\n" + game_leaderboard(chat_id))
+        await send_game_win_message(message, 3 if kind == "detective" else 2, context)
         return True
     if kind == "detective" and guess in ("الطباخ", "البستاني"):
         await message.reply_text("❌ مو هذا الشخص. ناقشوا الأدلة وجربوا مرة ثانية.")
@@ -4529,8 +4540,8 @@ async def game_callback(update, context):
             game_score(chat_id, user, 2)
             chat_data(chat_id)["game_state"] = None
             save_data()
-            await query.answer("إجابة صحيحة! +2 ⭐")
-            await message.reply_text(f"🎉 {user.first_name} جاوب صح وربح نقطتين!\n\n" + game_leaderboard(chat_id))
+            await query.answer()
+            await send_game_win_message(message, 2, context)
         else:
             await query.answer("مو صحيح، جرّب غيرك!", show_alert=True)
         return
@@ -4539,8 +4550,8 @@ async def game_callback(update, context):
             sent = await context.bot.send_dice(chat_id=chat_id, emoji="🎲")
             value = int(sent.dice.value)
             game_score(chat_id, user, value)
-            await query.answer(f"طلعت {value}! ربحت {value} نقاط ⭐", show_alert=True)
-            await message.reply_text(game_leaderboard(chat_id))
+            await query.answer()
+            await send_game_win_message(message, value, context)
         except TelegramError:
             await query.answer("تعذر رمي حجر النرد حالياً.", show_alert=True)
         return
