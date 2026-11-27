@@ -1654,6 +1654,13 @@ async def handle_group_text_commands(update, context):
     ):
         return False
 
+    # الحسابات التي أوقف المالك تواصل نيكسوس معها لا تنفذ أوامر نيكسوس أيضاً.
+    if (
+        str(user.id) in data.get("settings", {}).get("nexus_silenced_users", {})
+        and not is_bot_owner(user.id)
+    ):
+        return True
+
     text = (message.text or "").strip()
     key = re.sub(r"\s+", " ", text).strip().lower()
 
