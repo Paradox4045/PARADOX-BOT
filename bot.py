@@ -2017,7 +2017,7 @@ async def moderate(update, context):
     if await handle_group_text_commands(update, context):
         return
 
-    if await handle_game_text(message, chat.id, user, text):
+    if await handle_game_text(message, chat.id, user, text, context):
         return
 
     # الرد الترحيبي التلقائي عند ذكر اسم نيكسوس متوقف.
@@ -2281,7 +2281,7 @@ async def start_game(chat_id, message, game):
     state["message_id"] = sent.message_id
     save_data()
 
-async def handle_game_text(message, chat_id, user, text):
+async def handle_game_text(message, chat_id, user, text, context):
     info = chat_data(chat_id)
     normalized = normalize_game_text(text)
     if normalized == "الالعاب":
