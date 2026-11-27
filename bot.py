@@ -721,6 +721,18 @@ async def send_subscription_gate(message):
 # MENUS
 # =========================================================
 
+def private_games_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔤 تحدي الكلمات", callback_data="privategame:word"),
+            InlineKeyboardButton("🔢 خمن الرقم", callback_data="privategame:number"),
+            InlineKeyboardButton("🧠 الذكاء والثقافة", callback_data="privategame:quiz"),
+            InlineKeyboardButton("🎲 حجر النرد", callback_data="privategame:dice"),
+        ],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="back_main")],
+    ])
+
+
 def main_menu(user_id=None):
     rows = [
         [
@@ -1302,15 +1314,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
+    if action.startswith("privategame:"):
+        game_names = {
+            "privategame:word": "🔤 تحدي الكلمات",
+            "privategame:number": "🔢 خمن الرقم",
+            "privategame:quiz": "🧠 أسئلة الذكاء والثقافة",
+            "privategame:dice": "🎲 حجر النرد",
+        }
+        selected_game = game_names.get(action)
+        if selected_game:
+            await query.answer(
+                f"{selected_game} تبدأ داخل المجموعة. افتح المجموعة واكتب «الألعاب» ثم اضغط زر اللعبة.",
+                show_alert=True,
+            )
+        else:
+            await query.answer("اللعبة غير متاحة حالياً.", show_alert=True)
+        return
+
     if action == "games_center":
         await query.answer()
         await query.edit_message_text(
-            "🎮 مركز الألعاب — PARADOX 404\\n\\n"
-            "الألعاب تعمل داخل المجموعة حتى يشارك الأعضاء وتُسجّل نقاطهم بشكل مستقل لكل مجموعة.\\n\\n"
-            "افتح المجموعة واكتب: الألعاب\\n"
-            "الألعاب المتاحة: تحدي الكلمات، خمن الرقم، أسئلة الذكاء والثقافة، وحجر النرد.\\n\\n"
-            "🏆 لكل مجموعة لوحة متصدرين ونقاط خاصة بها.",
-            reply_markup=back_keyboard(),
+            "🎮 الألعاب 👑 — PARADOX 404\\n\\n"
+            "اختار لعبتك! الألعاب التسع مرتبة بالأرقام من 1 إلى 9:\\n\\n"
+            "1. 🎯 كت — اكتب: كت\\n"
+            "2. ❓ حزورة — اكتب: حزورة\\n"
+            "3. 🧩 لغز — اكتب: لغز\\n"
+            "4. ➗ رياضيات — اكتب: رياضيات\\n"
+            "5. 🔀 فكك — اكتب: فكك\\n"
+            "6. 🔤 تحدي الكلمات\\n"
+            "7. 🔢 خمن الرقم\\n"
+            "8. 🧠 أسئلة الذكاء والثقافة\\n"
+            "9. 🎲 حجر النرد\\n\\n"
+            "الألعاب الخمسة الأولى تبدأ بأوامرها داخل المجموعة. "
+            "أما الألعاب الأربع الأخيرة فتبدأ من الأزرار الموجودة بالأسفل.\\n\\n"
+            "افتح المجموعة واكتب «الألعاب» حتى تظهر لك أدوات اللعب. "
+            "النقاط والمتصدرون مستقلون لكل مجموعة.",
+            reply_markup=private_games_keyboard(),
         )
         return
 
