@@ -2392,7 +2392,8 @@ async def game_callback(update, context):
             return
         if not 0 <= choice < int(state.get("options_count", 0)):
             await query.answer("هذا الاختيار غير موجود.", show_alert=True)
-            return        if choice == int(state.get("answer", -1)):
+            return
+        if choice == int(state.get("answer", -1)):
             game_score(chat_id, user, 2)
             chat_data(chat_id)["game_state"] = None
             save_data()
