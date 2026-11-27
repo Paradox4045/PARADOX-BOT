@@ -5,437 +5,685 @@ import json
 import logging
 import tempfile
 
-from telegram import Update, ChatPermissions
+from telegram import (
+    Update,
+    ChatPermissions,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-WARN_LIMIT = 4
 DATA_FILE = "paradox_data.json"
+WARN_LIMIT = 4
 
-BAD_WORDS = [
-    "كلب",
-    "حمار",
-    "غبي",
-    "حقير",
-    "تافه",
-]
+BAD_WORDS = ["كلب", "حمار", "غبي", "حقير", "تافه"]
 
-warnings = {}
-delegated_admins = {}
-known_users = {}
+data = {
+    "warnings": {},
+    "delegated_admins": {},
+    "known_users": {},
+    "muted_members": {},
+    "roles": {},
+}
+
+ROLE_NAMES = {
+    "owner": "المالك",
+    "super_admin": "المشرف العام",
+    "admin": "المشرف",
+    "moderator": "المراقب",
+    "member": "العضو",
+}
 
 
-# =========================
+# =====================================
 # حفظ وتحميل البيانات
-# =========================
+# =====================================
 
-def save_data():
-    data = {
-        "warnings": warnings,
-        "delegated_admins": delegated_admins,
-        "known_users": known_users,
-    }
-
-    directory = os.path.dirname(os.path.abspath(DATA_FILE))
+def load_data():
+    global data
 
     try:
-        fd, temp_path = tempfile.mkstemp(
-            dir=directory,
-            suffix=".tmp"
-        )
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            saved = json.load(file)
 
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+        for key in data:
+            if key in saved:
+                data[key] = saved[key]
+
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logging.exception("Data loading error")
+
+
+def save_data():
+    temp_path = None
+
+    try:
+        folder = os.path.dirname(os.path.abspath(DATA_FILE))
+        fd, temp_path = tempfile.mkstemp(dir=folder)
+
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
 
         os.replace(temp_path, DATA_FILE)
 
     except Exception:
-        logging.exception("Could not save data")
+        logging.exception("Data saving error")
+
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
-def load_data():
-    global warnings, delegated_admins, known_users
+def ck(chat_id):
+    return str(chat_id)
 
+
+def uk(user_id):
+    return str(user_id)
+
+
+# =====================================
+# التحقق من المالك والمشرفين
+# =====================================
+
+async def is_owner(chat_id, user_id, context):
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        warnings = data.get("warnings", {})
-        delegated_admins = data.get("delegated_admins", {})
-        known_users = data.get("known_users", {})
-
-    except FileNotFoundError:
-        logging.info("No saved data found. Starting fresh.")
-
-    except Exception:
-        logging.exception("Could not load saved data")
-
-
-# =========================
-# أدوات مساعدة
-# =========================
-
-def contains_link(text):
-    pattern = (
-        r"(https?://|www\.|t\.me/|telegram\.me/)"
-    )
-
-    return bool(
-        re.search(pattern, text, re.IGNORECASE)
-    )
-
-
-def contains_bad_word(text):
-    words = re.findall(r"\w+", text.lower())
-
-    return any(
-        word in BAD_WORDS
-        for word in words
-    )
-
-
-def warning_key(chat_id, user_id):
-    return f"{chat_id}:{user_id}"
-
-
-def is_delegated(chat_id, user_id):
-    admins = delegated_admins.get(str(chat_id), [])
-    return str(user_id) in admins
-
-
-async def is_owner(chat, user_id):
-    try:
-        member = await chat.get_member(user_id)
+        member = await context.bot.get_chat_member(
+            chat_id, user_id
+        )
         return member.status == "creator"
     except Exception:
-        logging.exception("Could not check owner")
         return False
 
 
-async def can_unmute(chat, user_id):
+async def is_real_admin(chat_id, user_id, context):
     try:
-        member = await chat.get_member(user_id)
-
-        if member.status == "creator":
-            return True
-
-        if member.status != "administrator":
-            return False
-
-        return is_delegated(chat.id, user_id)
-
+        member = await context.bot.get_chat_member(
+            chat_id, user_id
+        )
+        return member.status in ("administrator", "creator")
     except Exception:
-        logging.exception("Could not check unmute permission")
         return False
 
+
+async def can_unmute(chat_id, user_id, context):
+    if await is_owner(chat_id, user_id, context):
+        return True
+
+    if not await is_real_admin(chat_id, user_id, context):
+        return False
+
+    admins = data["delegated_admins"].get(ck(chat_id), [])
+    return uk(user_id) in admins
+
+
+def get_role(chat_id, user_id):
+    return data["roles"].get(ck(chat_id), {}).get(
+        uk(user_id), "member"
+    )
+
+
+# =====================================
+# حفظ معلومات الأعضاء
+# =====================================
 
 def remember_user(chat_id, user):
     if not user:
         return
 
-    chat_key = str(chat_id)
-
-    known_users.setdefault(chat_key, {})
-
-    known_users[chat_key][str(user.id)] = {
-        "username": (user.username or "").lower(),
-        "first_name": user.first_name or "العضو",
+    data["known_users"].setdefault(ck(chat_id), {})[uk(user.id)] = {
+        "id": user.id,
+        "name": user.full_name,
+        "username": user.username or "",
     }
 
 
-def find_user_by_username(chat_id, username):
-    username = username.lstrip("@").lower()
+def find_username(chat_id, username):
+    username = username.replace("@", "").lower()
 
-    users = known_users.get(str(chat_id), {})
+    users = data["known_users"].get(ck(chat_id), {})
 
-    for user_id, user_data in users.items():
-        if user_data.get("username") == username:
-            return int(user_id), user_data.get("first_name", "العضو")
+    for uid, info in users.items():
+        if info.get("username", "").lower() == username:
+            return int(uid)
 
-    return None, None
+    return None
 
 
-# =========================
-# أمر البداية
-# =========================
+# =====================================
+# واجهة الترحيب
+# =====================================
+
+def home_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🛡️ الإدارة والحماية",
+                callback_data="management",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🚀 التطوير والإضافات",
+                callback_data="development",
+            )
+        ],
+    ])
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
 
-    if not message:
-        return
-
     await message.reply_text(
-        "🔥 أهلاً بك في PARADOX 404\n\n"
-        "أنا بوت إدارة المجموعات.\n"
-        "🛡️ أحذف الروابط والألفاظ المسيئة.\n"
-        "⚠️ أعطي 4 إنذارات.\n"
-        "🔇 أكتم المخالف بعد الإنذار الرابع.\n\n"
-        "صلاحية فك الكتم للمالك والمشرفين المفوضين فقط."
+        "🔥 أهلاً وسهلاً بك في PARADOX 404\n\n"
+        "أنا مساعدك الذكي لإدارة المجموعات وحمايتها.\n\n"
+        "نظام متطور صُمم لتوفير بيئة منظمة وآمنة "
+        "وتجربة إدارة أكثر ذكاءً.\n\n"
+        "اختر القسم الذي تريد الدخول إليه:",
+        reply_markup=home_keyboard(),
     )
 
 
-# =========================
-# منح صلاحية فك الكتم
-# =========================
+# =====================================
+# القوائم الداخلية
+# =====================================
+
+async def menu_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    user = query.from_user
+    chat = query.message.chat
+
+    if query.data == "home":
+        await query.edit_message_text(
+            "🔥 أهلاً بك في PARADOX 404\n\n"
+            "اختر القسم الذي تريد الدخول إليه:",
+            reply_markup=home_keyboard(),
+        )
+        return
+
+    if query.data == "development":
+        await query.edit_message_text(
+            "🚀 التطوير والإضافات المستقبلية\n\n"
+            "هذا القسم مستقل عن الإدارة والحماية.\n"
+            "ستضاف هنا الميزات الجديدة مستقبلاً.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "⬅️ رجوع",
+                        callback_data="home",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    if query.data == "management":
+        if chat.type not in ("group", "supergroup"):
+            await query.edit_message_text(
+                "افتح قسم الإدارة من داخل المجموعة "
+                "حتى نتحقق من رتبتك."
+            )
+            return
+
+        if await is_owner(chat.id, user.id, context):
+            role = "primary_owner"
+        else:
+            role = get_role(chat.id, user.id)
+
+        if role == "member":
+            await query.edit_message_text(
+                "⛔ هذا القسم مخصص للإدارة فقط.\n\n"
+                "لا تملك صلاحية الدخول.",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ رجوع",
+                            callback_data="home",
+                        )
+                    ]
+                ]),
+            )
+            return
+
+        if role == "moderator":
+            text = (
+                "👁️ قسم المراقبة\n\n"
+                "رتبتك: المراقب\n"
+                "متابعة المخالفات والحماية."
+            )
+
+        elif role == "primary_owner":
+            text = (
+                "👑 الإدارة والحماية\n\n"
+                "رتبتك: المالك الأساسي\n\n"
+                "أوامرك:\n"
+                "• تعيين مالك\n"
+                "• تعيين مشرف عام\n"
+                "• تعيين مشرف\n"
+                "• تعيين مراقب\n"
+                "• إزالة الرتبة\n"
+                "• منح فك الكتم\n"
+                "• سحب فك الكتم\n"
+                "• فتح الكتم\n"
+                "• مسح المكتومين"
+            )
+
+        else:
+            text = (
+                "🛡️ الإدارة والحماية\n\n"
+                f"رتبتك: {ROLE_NAMES.get(role, 'عضو')}\n\n"
+                "الصلاحيات:\n"
+                "متابعة إدارة المجموعة حسب رتبتك."
+            )
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "⬅️ رجوع",
+                        callback_data="home",
+                    )
+                ]
+            ]),
+        )
+
+
+# =====================================
+# تعيين الرتب
+# =====================================
+
+async def assign_role(update, context, role):
+    message = update.effective_message
+    chat = update.effective_chat
+    actor = update.effective_user
+
+    if not await is_owner(chat.id, actor.id, context):
+        await message.reply_text(
+            "⛔ المالك الأساسي فقط يستطيع توزيع الرتب."
+        )
+        return
+
+    if not message.reply_to_message:
+        await message.reply_text(
+            "رد على رسالة الشخص المطلوب تعيين رتبته."
+        )
+        return
+
+    target = message.reply_to_message.from_user
+
+    if not target or target.is_bot or target.id == actor.id:
+        await message.reply_text("⚠️ الشخص غير صالح.")
+        return
+
+    if role in ("owner", "super_admin", "admin"):
+        if not await is_real_admin(chat.id, target.id, context):
+            await message.reply_text(
+                "يجب أن يكون الشخص مشرفاً فعلياً بالمجموعة أولاً."
+            )
+            return
+
+    data["roles"].setdefault(ck(chat.id), {})[uk(target.id)] = role
+    remember_user(chat.id, target)
+    save_data()
+
+    await message.reply_text(
+        f"✅ تم تعيين {target.full_name}\n"
+        f"الرتبة: {ROLE_NAMES[role]}"
+    )
+
+
+async def remove_role(update, context):
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if not await is_owner(chat.id, update.effective_user.id, context):
+        await message.reply_text(
+            "⛔ المالك الأساسي فقط يستطيع إزالة الرتب."
+        )
+        return
+
+    if not message.reply_to_message:
+        await message.reply_text(
+            "رد على رسالة الشخص المطلوب."
+        )
+        return
+
+    target = message.reply_to_message.from_user
+
+    data["roles"].setdefault(ck(chat.id), {}).pop(
+        uk(target.id), None
+    )
+
+    data["delegated_admins"].setdefault(ck(chat.id), [])
+    if uk(target.id) in data["delegated_admins"][ck(chat.id)]:
+        data["delegated_admins"][ck(chat.id)].remove(uk(target.id))
+
+    save_data()
+    await message.reply_text("✅ تمت إزالة الرتبة والصلاحية الداخلية.")
+
+
+# =====================================
+# منح وسحب صلاحية فك الكتم
+# =====================================
 
 async def grant_permission(update, context):
     message = update.effective_message
     chat = update.effective_chat
-    owner = update.effective_user
 
-    if not message or not chat or not owner:
-        return
-
-    if not await is_owner(chat, owner.id):
+    if not await is_owner(chat.id, update.effective_user.id, context):
         await message.reply_text(
-            "⛔ المالك فقط يگدر يمنح صلاحية فك الكتم."
+            "⛔ المالك الأساسي فقط يستطيع منح الصلاحية."
         )
         return
 
     if not message.reply_to_message:
         await message.reply_text(
-            "⚠️ رد على رسالة المشرف واكتب:\n"
-            "منح فك الكتم"
+            "رد على رسالة المشرف واكتب: منح فك الكتم"
         )
         return
 
     target = message.reply_to_message.from_user
 
-    if not target or target.is_bot:
-        await message.reply_text("⚠️ العضو غير صالح.")
-        return
-
-    try:
-        member = await chat.get_member(target.id)
-
-        if member.status != "administrator":
-            await message.reply_text(
-                "⚠️ هذا العضو مو مشرف بالمجموعة."
-            )
-            return
-
-    except Exception:
+    if not await is_real_admin(chat.id, target.id, context):
         await message.reply_text(
-            "⚠️ تعذر التحقق من رتبة العضو."
+            "يجب أن يكون الشخص مشرفاً فعلياً."
         )
         return
 
-    chat_key = str(chat.id)
+    admins = data["delegated_admins"].setdefault(ck(chat.id), [])
 
-    delegated_admins.setdefault(chat_key, [])
-
-    if str(target.id) not in delegated_admins[chat_key]:
-        delegated_admins[chat_key].append(str(target.id))
+    if uk(target.id) not in admins:
+        admins.append(uk(target.id))
 
     save_data()
-
     await message.reply_text(
-        f"✅ تم منح {target.first_name} صلاحية فك الكتم."
+        f"✅ تم منح {target.full_name} صلاحية فك الكتم."
     )
 
-
-# =========================
-# سحب صلاحية فك الكتم
-# =========================
 
 async def revoke_permission(update, context):
     message = update.effective_message
     chat = update.effective_chat
-    owner = update.effective_user
 
-    if not message or not chat or not owner:
-        return
-
-    if not await is_owner(chat, owner.id):
+    if not await is_owner(chat.id, update.effective_user.id, context):
         await message.reply_text(
-            "⛔ المالك فقط يگدر يسحب الصلاحية."
+            "⛔ المالك الأساسي فقط يستطيع سحب الصلاحية."
         )
         return
 
     if not message.reply_to_message:
         await message.reply_text(
-            "⚠️ رد على رسالة المشرف واكتب:\n"
-            "سحب فك الكتم"
+            "رد على رسالة المشرف واكتب: سحب فك الكتم"
         )
         return
 
     target = message.reply_to_message.from_user
+    admins = data["delegated_admins"].setdefault(ck(chat.id), [])
 
-    if not target:
-        return
-
-    chat_key = str(chat.id)
-
-    delegated_admins.setdefault(chat_key, [])
-
-    if str(target.id) in delegated_admins[chat_key]:
-        delegated_admins[chat_key].remove(str(target.id))
+    if uk(target.id) in admins:
+        admins.remove(uk(target.id))
 
     save_data()
-
     await message.reply_text(
-        f"🔒 تم سحب صلاحية فك الكتم من {target.first_name}."
+        f"🔒 تم سحب صلاحية فك الكتم من {target.full_name}."
     )
 
 
-# =========================
+# =====================================
 # فك الكتم
-# =========================
+# =====================================
 
-async def unmute_member(update, context, target_id, target_name):
+async def unmute_member(chat_id, user_id, context):
+    chat = await context.bot.get_chat(chat_id)
+
+    permissions = chat.permissions or ChatPermissions(
+        can_send_messages=True,
+        can_send_audios=True,
+        can_send_documents=True,
+        can_send_photos=True,
+        can_send_videos=True,
+        can_send_video_notes=True,
+        can_send_voice_notes=True,
+        can_send_polls=True,
+        can_send_other_messages=True,
+        can_add_web_page_previews=True,
+    )
+
+    await context.bot.restrict_chat_member(
+        chat_id=chat_id,
+        user_id=user_id,
+        permissions=permissions,
+    )
+
+
+async def handle_unmute(update, context):
     message = update.effective_message
     chat = update.effective_chat
-    user = update.effective_user
+    actor = update.effective_user
 
-    if not message or not chat or not user:
+    if not await can_unmute(chat.id, actor.id, context):
+        await message.reply_text(
+            "⛔ ما عندك صلاحية فتح الكتم."
+        )
         return
 
-    if not await can_unmute(chat, user.id):
+    target_id = None
+
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
+    elif context.args:
+        target_id = find_username(chat.id, context.args[0])
+
+    if not target_id:
         await message.reply_text(
-            "⛔ ما عندك صلاحية فك الكتم."
+            "رد على رسالة العضو المكتوم، أو استخدم:\n"
+            "/unmute @username"
         )
         return
 
     try:
-        await context.bot.restrict_chat_member(
-            chat_id=chat.id,
-            user_id=target_id,
-            permissions=ChatPermissions(
-                can_send_messages=True,
-                can_send_audios=True,
-                can_send_documents=True,
-                can_send_photos=True,
-                can_send_videos=True,
-                can_send_video_notes=True,
-                can_send_voice_notes=True,
-                can_send_polls=True,
-                can_send_other_messages=True,
-                can_add_web_page_previews=True,
-            ),
+        await unmute_member(chat.id, target_id, context)
+
+        data["warnings"].setdefault(ck(chat.id), {}).pop(
+            uk(target_id), None
         )
 
-        key = warning_key(chat.id, target_id)
-        warnings[key] = 0
+        data["muted_members"].setdefault(ck(chat.id), {}).pop(
+            uk(target_id), None
+        )
+
         save_data()
-
-        await message.reply_text(
-            f"🔓 تم فك الكتم عن {target_name}."
-        )
+        await message.reply_text("✅ تم فتح الكتم بنجاح.")
 
     except Exception:
-        logging.exception("Could not unmute member")
-
+        logging.exception("Unmute failed")
         await message.reply_text(
-            "⚠️ تعذر فك الكتم.\n"
-            "تأكد أن البوت مشرف ويملك صلاحية تقييد الأعضاء."
+            "تعذر فتح الكتم. تأكد من صلاحيات البوت."
         )
 
 
-async def unmute(update, context):
+# =====================================
+# مسح جميع المكتومين المسجلين
+# =====================================
+
+async def clear_muted(update, context):
     message = update.effective_message
     chat = update.effective_chat
 
-    if not message or not chat:
-        return
-
-    target_id = None
-    target_name = "العضو"
-
-    if message.reply_to_message:
-        target = message.reply_to_message.from_user
-
-        if target:
-            target_id = target.id
-            target_name = target.first_name
-
-    elif context.args:
-        target_id, target_name = find_user_by_username(
-            chat.id,
-            context.args[0]
-        )
-
-    if not target_id:
+    if not await is_owner(chat.id, update.effective_user.id, context):
         await message.reply_text(
-            "⚠️ رد على رسالة العضو واكتب فتح الكتم.\n"
-            "أو استخدم /unmute @username إذا كان البوت يعرفه."
+            "⛔ هذا الأمر للمالك الأساسي فقط."
         )
         return
 
-    await unmute_member(
-        update,
-        context,
-        target_id,
-        target_name
+    chat_id = ck(chat.id)
+    muted = data["muted_members"].setdefault(chat_id, {})
+
+    if not muted:
+        await message.reply_text(
+            "لا يوجد أعضاء مكتومون مسجلون عند البوت."
+        )
+        return
+
+    success = 0
+    failed = 0
+
+    for uid in list(muted.keys()):
+        try:
+            await unmute_member(chat.id, int(uid), context)
+
+            data["warnings"].setdefault(chat_id, {}).pop(uid, None)
+            muted.pop(uid, None)
+            success += 1
+
+        except Exception:
+            failed += 1
+            logging.exception("Bulk unmute failed")
+
+    save_data()
+
+    await message.reply_text(
+        "🧹 تقرير مسح المكتومين\n\n"
+        f"✅ تم فتح الكتم: {success}\n"
+        f"❌ تعذر فتح الكتم: {failed}\n\n"
+        "ملاحظة: البوت يستطيع فتح كتم الأعضاء "
+        "الذين سجلهم بنفسه، وليس كل مكتوم قديم بالمجموعة."
     )
 
 
-# =========================
-# نظام التحذيرات والكتم
-# =========================
+# =====================================
+# استقبال الأوامر العربية
+# =====================================
 
-async def moderate(update, context):
+async def text_commands(update, context):
     message = update.effective_message
-    user = update.effective_user
     chat = update.effective_chat
 
-    if not message or not user or user.is_bot or not chat:
+    if not message or not message.text:
         return
 
     if chat.type not in ("group", "supergroup"):
         return
 
-    try:
-        member = await chat.get_member(user.id)
+    text = message.text.strip()
 
-        if member.status in ("administrator", "creator"):
-            return
+    if text == "منح فك الكتم":
+        await grant_permission(update, context)
+        return
 
-    except Exception:
-        logging.exception("Could not check member")
+    if text == "سحب فك الكتم":
+        await revoke_permission(update, context)
+        return
+
+    if text == "مسح المكتومين":
+        await clear_muted(update, context)
+        return
+
+    if text == "فتح الكتم":
+        await handle_unmute(update, context)
+        return
+
+    if text.startswith("فتح الكتم @"):
+        username = text.split("@", 1)[1].strip()
+        context.args = [username]
+        await handle_unmute(update, context)
+        return
+
+    role_commands = {
+        "تعيين مالك": "owner",
+        "تعيين مشرف عام": "super_admin",
+        "تعيين مشرف": "admin",
+        "تعيين مراقب": "moderator",
+    }
+
+    if text in role_commands:
+        await assign_role(update, context, role_commands[text])
+        return
+
+    if text == "إزالة الرتبة":
+        await remove_role(update, context)
+        return
+
+
+# =====================================
+# نظام الحماية والإنذارات والكتم
+# =====================================
+
+async def moderate(update, context):
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not message or not user:
+        return
+
+    if chat.type not in ("group", "supergroup"):
         return
 
     remember_user(chat.id, user)
 
     text = message.text or message.caption or ""
 
-    reason = None
+    if not text:
+        save_data()
+        return
 
-    if contains_link(text):
-        reason = "نشر رابط ممنوع"
+    try:
+        member = await context.bot.get_chat_member(
+            chat.id, user.id
+        )
 
-    elif contains_bad_word(text):
-        reason = "استخدام ألفاظ مسيئة"
+        if member.status in ("administrator", "creator"):
+            save_data()
+            return
 
-    if not reason:
+    except Exception:
+        return
+
+    has_link = bool(re.search(
+        r"(https?://|www\.|t\.me/|telegram\.me/)",
+        text,
+        re.IGNORECASE,
+    ))
+
+    has_bad_word = any(word in text for word in BAD_WORDS)
+
+    if not has_link and not has_bad_word:
         save_data()
         return
 
     try:
         await message.delete()
-
     except Exception:
-        logging.exception("Could not delete message")
+        logging.exception("Delete failed")
+
+    chat_id = ck(chat.id)
+    uid = uk(user.id)
+
+    warnings = data["warnings"].setdefault(chat_id, {})
+    muted = data["muted_members"].setdefault(chat_id, {})
+
+    if uid in muted:
+        save_data()
         return
 
-    key = warning_key(chat.id, user.id)
-
-    count = int(warnings.get(key, 0)) + 1
-    warnings[key] = count
-
-    save_data()
+    count = int(warnings.get(uid, 0)) + 1
+    warnings[uid] = count
 
     if count >= WARN_LIMIT:
         try:
@@ -443,118 +691,79 @@ async def moderate(update, context):
                 chat_id=chat.id,
                 user_id=user.id,
                 permissions=ChatPermissions(
-                    can_send_messages=False,
-                    can_send_audios=False,
-                    can_send_documents=False,
-                    can_send_photos=False,
-                    can_send_videos=False,
-                    can_send_video_notes=False,
-                    can_send_voice_notes=False,
-                    can_send_polls=False,
-                    can_send_other_messages=False,
-                    can_add_web_page_previews=False,
+                    can_send_messages=False
                 ),
             )
 
+            muted[uid] = {
+                "id": user.id,
+                "name": user.full_name,
+                "username": user.username or "",
+            }
+
+            save_data()
+
             await context.bot.send_message(
-                chat_id=chat.id,
-                text=(
-                    f"🔇 تم كتم {user.first_name}.\n"
-                    f"وصل إلى {WARN_LIMIT} إنذارات.\n"
-                    "لا يمكنه العودة إلا بعد فك الكتم من شخص مخوّل."
-                ),
+                chat.id,
+                f"🔇 تم كتم {user.full_name} بعد "
+                f"{WARN_LIMIT} إنذارات."
             )
 
         except Exception:
-            logging.exception("Could not mute member")
-
+            logging.exception("Mute failed")
             await context.bot.send_message(
-                chat_id=chat.id,
-                text=(
-                    "⚠️ تعذر كتم العضو.\n"
-                    "تأكد من صلاحيات البوت."
-                ),
+                chat.id,
+                "تعذر كتم العضو. تأكد من صلاحيات البوت."
             )
 
     else:
+        save_data()
+
         await context.bot.send_message(
-            chat_id=chat.id,
-            text=(
-                f"⚠️ تحذير {count}/{WARN_LIMIT}\n"
-                f"العضو: {user.first_name}\n"
-                f"السبب: {reason}"
-            ),
+            chat.id,
+            f"⚠️ تحذير {count}/{WARN_LIMIT}\n"
+            f"العضو: {user.full_name}\n"
+            "يرجى الالتزام بقوانين المجموعة."
         )
 
 
-# =========================
-# الأوامر العربية
-# =========================
+# =====================================
+# معالجة الأخطاء
+# =====================================
 
-async def text_commands(update, context):
-    message = update.effective_message
-
-    if not message or not message.text:
-        return
-
-    command = message.text.strip()
-
-    if command == "منح فك الكتم":
-        await grant_permission(update, context)
-
-    elif command == "سحب فك الكتم":
-        await revoke_permission(update, context)
-
-    elif command == "فتح الكتم":
-        await unmute(update, context)
-
-    elif command.startswith("فتح الكتم @"):
-        username = command.split("@", 1)[1].strip()
-
-        target_id, target_name = find_user_by_username(
-            update.effective_chat.id,
-            username
-        )
-
-        if target_id:
-            await unmute_member(
-                update,
-                context,
-                target_id,
-                target_name
-            )
-        else:
-            await message.reply_text(
-                "⚠️ ما لكيت هذا المستخدم ضمن الأعضاء المعروفين للبوت."
-            )
+async def error_handler(update, context):
+    logging.error(
+        "Update error: %s",
+        context.error,
+    )
 
 
-# =========================
+# =====================================
 # تشغيل البوت
-# =========================
+# =====================================
 
 def main():
     if not BOT_TOKEN:
         raise RuntimeError(
-            "BOT_TOKEN is missing from Railway Variables"
+            "BOT_TOKEN غير موجود في متغيرات Railway."
         )
 
     load_data()
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(
-        CommandHandler("start", start)
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("unmute", handle_unmute))
 
     app.add_handler(
-        CommandHandler("unmute", unmute)
+        CallbackQueryHandler(menu_callback)
     )
 
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            text_commands
+            text_commands,
         ),
         group=0,
     )
@@ -562,12 +771,14 @@ def main():
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
-            moderate
+            moderate,
         ),
         group=1,
     )
 
-    logging.info("PARADOX 404 is starting...")
+    app.add_error_handler(error_handler)
+
+    logging.info("PARADOX 404 started successfully")
 
     app.run_polling()
 
