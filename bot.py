@@ -194,6 +194,7 @@ def load_data():
         loaded.setdefault("settings", {})
         loaded["settings"].setdefault("force_channel", None)
         loaded["settings"].setdefault("force_channel_url", None)
+        loaded["settings"].setdefault("nexus_silenced_users", {})
         return loaded
     except FileNotFoundError:
         return json.loads(json.dumps(DEFAULT_DATA))
@@ -1658,6 +1659,52 @@ async def handle_group_text_commands(update, context):
 
     # NEXUS CORE - المرحلة الأولى: فهم صيغ الكلام الطبيعي وتحويلها
     # إلى الأوامر الموجودة، مع إبقاء فحوص الصلاحيات داخل الدوال الأصلية.
+    # تحكم المالك بمن يتحدث معه نيكسوس، ويُحفظ على مستوى البوت.
+    nexus_control = re.fullmatch(
+        r"\s*(?:يا\s+)?(?:نيكسوس|نكسوس)\s+"
+        r"(لا\s+(?:تحچي|تحجي|تتكلم)|تجاهل|ارجع\s+(?:احچي|احجي|تكلم)|"
+        r"احچي|احجي|تكلم)\s+(?:ويا|مع)\s+@([A-Za-z0-9_]{5,32})\s*",
+        text,
+        re.I,
+    )
+    if nexus_control:
+        if not is_bot_owner(user.id):
+            await message.reply_text("⛔ هذا التحكم خاص بمالك البوت.")
+            return True
+
+        action = normalize_message(nexus_control.group(1))
+        username = nexus_control.group(2).lower()
+        silenced = data["settings"].setdefault("nexus_silenced_users", {})
+        target_id = None
+        target_name = username
+
+        for saved_chat in data.get("chats", {}).values():
+            for saved_id, activity in saved_chat.get("activity", {}).items():
+                if str(activity.get("username", "")).lower() == username:
+                    target_id = str(saved_id)
+                    target_name = activity.get("name") or username
+                    break
+            if target_id:
+                break
+
+        if not target_id:
+            await message.reply_text(
+                f"ما عندي سجل للحساب @{username} بعد. "
+                "خلي الشخص يرسل رسالة واحدة بالمجموعة، وبعدها أگدر أتعرف عليه."
+            )
+            return True
+
+        silence_action = action.startswith("لا ") or action == "تجاهل"
+        if silence_action:
+            silenced[target_id] = {"username": username, "name": target_name}
+            reply = f"تم. نيكسوس راح يتجاهل @{username} وما يرد عليه."
+        else:
+            silenced.pop(target_id, None)
+            reply = f"تم. رجّعت التواصل ويا @{username}."
+        save_data()
+        await message.reply_text("✅ " + reply)
+        return True
+
     smart_key = normalize_message(text)
     smart_key = re.sub(r"^(?:يا )?(?:نيكسوس|نكسوس)\s+", "", smart_key)
     for polite_prefix in (
@@ -1899,9 +1946,10 @@ async def count_activity(chat_id, user):
     info = chat_data(chat_id)
     uid = str(user.id)
     record = info["activity"].setdefault(
-        uid, {"name": user.full_name, "count": 0}
+        uid, {"name": user.full_name, "username": "", "count": 0}
     )
     record["name"] = user.full_name
+    record["username"] = (user.username or "").lower()
     record["count"] = int(record.get("count", 0)) + 1
     save_data()
 
@@ -1988,6 +2036,9 @@ async def moderate(update, context):
     text = message.text or message.caption or ""
 
     if re.search(r"(?<!\w)(نيكسوس|نكسوس)(?!\w)", text, re.I):
+        silenced_users = data.get("settings", {}).get("nexus_silenced_users", {})
+        if str(user.id) in silenced_users:
+            return
         await nexus_reply(message)
         return
 
