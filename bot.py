@@ -2243,7 +2243,7 @@ async def start_game(chat_id, message, game):
 async def handle_game_text(message, chat_id, user, text):
     info = chat_data(chat_id)
     normalized = normalize_message(text)
-    if normalized in ("الالعاب", "الألعاب", "العاب", "ألعاب", "لعبة", "العب"):
+    if normalized == "الالعاب":
         await message.reply_text("🎮 ألعاب نيكسوس\nاختاروا اللعبة:", reply_markup=games_keyboard())
         return True
     if normalized in ("المتصدرين", "متصدرين", "ترتيب الالعاب"):
