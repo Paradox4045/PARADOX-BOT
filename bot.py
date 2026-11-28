@@ -82,11 +82,11 @@ ROLE_COMMANDS = {
     "owner": [
         ("رفع_مالك", "تعيين مالك جديد", "assign_owner"),
         ("عزل_مالك", "سحب رتبة المالك", "assign_owner"),
-        ("رفع_نائب", "تعيين نائب المالك", "assign_roles"),
-        ("تعيين_إداري", "تعيين إداري", "assign_roles"),
-        ("تعيين_مشرف", "تعيين مشرف", "assign_roles"),
-        ("تعيين_مساعد", "تعيين مساعد", "assign_roles"),
-        ("تعيين_مراقب", "تعيين مراقب", "assign_roles"),
+        ("رفع_نائب", "تعيين نائب المالك", "manage_roles"),
+        ("تعيين_إداري", "تعيين إداري", "manage_roles"),
+        ("تعيين_مشرف", "تعيين مشرف", "manage_roles"),
+        ("تعيين_مساعد", "تعيين مساعد", "manage_roles"),
+        ("تعيين_مراقب", "تعيين مراقب", "manage_roles"),
         ("الصلاحيات", "عرض صلاحيات الرتب", "manage_permissions"),
         ("منح_صلاحية", "منح صلاحية محددة", "manage_permissions"),
         ("سحب_صلاحية", "سحب صلاحية محددة", "manage_permissions"),
@@ -97,8 +97,8 @@ ROLE_COMMANDS = {
     "deputy": [
         ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
         ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "unmute"),
-        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "assign_roles"),
-        ("عزل_مشرف", "عزل مشرف عند التفويض", "assign_roles"),
+        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "manage_roles"),
+        ("عزل_مشرف", "عزل مشرف عند التفويض", "manage_roles"),
         ("الإنذارات", "مراجعة إنذارات الأعضاء", "warnings"),
         ("إزالة_إنذار", "حذف إنذار", "warnings"),
         ("تنظيف", "حذف الرسائل المخالفة", "delete"),
@@ -310,18 +310,37 @@ def load_data():
 
 data = load_data()
 
+def rebuild_group_message_history(chat_id=None):
+    """يعيد مزامنة ذاكرة الرسائل مع البيانات المحفوظة بعد الاستعادة أو الاستيراد."""
+    if chat_id is None:
+        group_message_history.clear()
+        saved_chats = data.get("chats", {})
+    else:
+        chat_key = str(int(chat_id))
+        group_message_history.pop(int(chat_id), None)
+        saved_chats = {
+            chat_key: data.get("chats", {}).get(chat_key, {})
+        }
+
+    for raw_chat_id, info in saved_chats.items():
+        try:
+            history = info.get("message_history", [])
+            if not isinstance(history, list):
+                history = []
+            group_message_history[int(raw_chat_id)] = deque(
+                (
+                    item for item in history[-DELETE_TRACK_LIMIT:]
+                    if isinstance(item, dict)
+                    and "id" in item and "date" in item
+                ),
+                maxlen=DELETE_TRACK_LIMIT,
+            )
+        except (TypeError, ValueError):
+            logger.warning("Invalid saved message history for group %s", raw_chat_id)
+
+
 # استعادة سجل الرسائل من التخزين الدائم حتى يستمر أمر التنظيف بعد إعادة التشغيل.
-for _chat_id, _info in data.get("chats", {}).items():
-    _history = _info.get("message_history", [])
-    if isinstance(_history, list):
-        group_message_history[int(_chat_id)] = deque(
-            (
-                item for item in _history[-DELETE_TRACK_LIMIT:]
-                if isinstance(item, dict)
-                and "id" in item and "date" in item
-            ),
-            maxlen=DELETE_TRACK_LIMIT,
-        )
+rebuild_group_message_history()
 
 
 def save_data():
@@ -389,6 +408,13 @@ def restore_group_backup(chat_id, backup_path):
         raise ValueError("Backup does not belong to this group")
     data.setdefault("chats", {})[str(int(chat_id))] = payload["group"]
     chat_data(chat_id)
+    rebuild_group_message_history(chat_id)
+    chat_id_int = int(chat_id)
+    for tracker in (spam_tracker, duplicate_tracker):
+        for key in list(tracker):
+            if isinstance(key, tuple) and key[0] == chat_id_int:
+                tracker.pop(key, None)
+    raid_join_tracker.pop(chat_id_int, None)
     save_data()
 
 
@@ -2200,6 +2226,10 @@ async def import_data_backup(update, context):
             os.fsync(output.fileno())
         os.replace(temp_path, DATA_FILE)
         data = candidate
+        rebuild_group_message_history()
+        spam_tracker.clear()
+        duplicate_tracker.clear()
+        raid_join_tracker.clear()
         await message.reply_text(
             "✅ تم استيراد النسخة الاحتياطية بنجاح وحفظ بيانات المجموعات."
         )
@@ -2355,6 +2385,16 @@ async def admin_action(update, context, action):
         return
 
     target_role = assigned_role(chat.id, target.id)
+    target_member = await get_member(chat.id, target.id, context)
+    actor_member = await get_member(chat.id, actor.id, context)
+    if (
+        target_member
+        and target_member.status == "administrator"
+        and (not actor_member or actor_member.status not in ("administrator", "creator"))
+    ):
+        await message.reply_text("⛔ ما تگدر تنفذ إجراء على مشرف تيليجرام من رتبة أدنى.")
+        log_action(chat.id, actor, "محاولة إجراء على مشرف تيليجرام", target)
+        return
     if await is_group_owner(chat.id, target.id, context):
         await message.reply_text("⛔ ما أگدر أنفذ عقوبة على منشئ المجموعة أو مالكها.")
         return
@@ -4281,7 +4321,12 @@ async def moderate(update, context):
         await search_song(message, chat.id, song_match.group(1))
         return
 
-    if await is_admin(chat.id, user.id, context):
+    # كل الرتب المعينة داخل PARADOX 404 تُعامل كفريق إدارة،
+    # فلا تتعرض لعقوبات الحماية التلقائية بسبب رسائلها.
+    if (
+        await is_admin(chat.id, user.id, context)
+        or assigned_role(chat.id, user.id) in ROLE_ORDER
+    ):
         await nexus_ai_reply(message, chat.id, user, text)
         return
 
