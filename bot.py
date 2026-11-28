@@ -41,7 +41,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "").strip()
-DATA_FILE = Path(os.getenv("DATA_FILE", "paradox_data.json"))
+# Railway's persistent volume is mounted at /data. Keep bot state there by default.
+# Local development falls back to the project directory when /data is unavailable.
+DEFAULT_DATA_PATH = "/data/paradox_data.json" if Path("/data").is_dir() else "paradox_data.json"
+DATA_FILE = Path(os.getenv("DATA_FILE", DEFAULT_DATA_PATH))
+LEGACY_DATA_FILE = Path("paradox_data.json")
 
 WARN_LIMIT = 4
 SPAM_WINDOW_SECONDS = 6
@@ -78,11 +82,11 @@ ROLE_COMMANDS = {
     "owner": [
         ("رفع_مالك", "تعيين مالك جديد", "assign_owner"),
         ("عزل_مالك", "سحب رتبة المالك", "assign_owner"),
-        ("رفع_نائب", "تعيين نائب المالك", "assign_roles"),
-        ("تعيين_إداري", "تعيين إداري", "assign_roles"),
-        ("تعيين_مشرف", "تعيين مشرف", "assign_roles"),
-        ("تعيين_مساعد", "تعيين مساعد", "assign_roles"),
-        ("تعيين_مراقب", "تعيين مراقب", "assign_roles"),
+        ("رفع_نائب", "تعيين نائب المالك", "manage_roles"),
+        ("تعيين_إداري", "تعيين إداري", "manage_roles"),
+        ("تعيين_مشرف", "تعيين مشرف", "manage_roles"),
+        ("تعيين_مساعد", "تعيين مساعد", "manage_roles"),
+        ("تعيين_مراقب", "تعيين مراقب", "manage_roles"),
         ("الصلاحيات", "عرض صلاحيات الرتب", "manage_permissions"),
         ("منح_صلاحية", "منح صلاحية محددة", "manage_permissions"),
         ("سحب_صلاحية", "سحب صلاحية محددة", "manage_permissions"),
@@ -93,8 +97,8 @@ ROLE_COMMANDS = {
     "deputy": [
         ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
         ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "unmute"),
-        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "assign_roles"),
-        ("عزل_مشرف", "عزل مشرف عند التفويض", "assign_roles"),
+        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "manage_roles"),
+        ("عزل_مشرف", "عزل مشرف عند التفويض", "manage_roles"),
         ("الإنذارات", "مراجعة إنذارات الأعضاء", "warnings"),
         ("إزالة_إنذار", "حذف إنذار", "warnings"),
         ("تنظيف", "حذف الرسائل المخالفة", "delete"),
@@ -163,7 +167,6 @@ LOCK_TYPES = {
     "polls": "الاستطلاعات",
     "spam": "الإغراق والتكرار",
     "mentions": "المنشنات الجماعية",
-    "bots": "مراقبة دخول البوتات",
 }
 
 DEFAULT_DATA = {
@@ -270,6 +273,21 @@ def is_duplicate_message(chat_id, user_id, text):
 # =========================================================
 
 def load_data():
+    # One-time migration from the old container-local path into Railway's
+    # persistent volume. This also supports an explicitly configured DATA_FILE.
+    if (
+        not DATA_FILE.exists()
+        and DATA_FILE.resolve() != LEGACY_DATA_FILE.resolve()
+        and LEGACY_DATA_FILE.is_file()
+    ):
+        try:
+            DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(LEGACY_DATA_FILE, DATA_FILE)
+            logger.info("Migrated legacy bot data into %s", DATA_FILE)
+        except OSError:
+            logger.exception("Could not migrate legacy bot data into persistent storage")
+            raise
+
     try:
         with DATA_FILE.open("r", encoding="utf-8") as f:
             loaded = json.load(f)
@@ -291,18 +309,37 @@ def load_data():
 
 data = load_data()
 
+def rebuild_group_message_history(chat_id=None):
+    """يعيد مزامنة ذاكرة الرسائل مع البيانات المحفوظة بعد الاستعادة أو الاستيراد."""
+    if chat_id is None:
+        group_message_history.clear()
+        saved_chats = data.get("chats", {})
+    else:
+        chat_key = str(int(chat_id))
+        group_message_history.pop(int(chat_id), None)
+        saved_chats = {
+            chat_key: data.get("chats", {}).get(chat_key, {})
+        }
+
+    for raw_chat_id, info in saved_chats.items():
+        try:
+            history = info.get("message_history", [])
+            if not isinstance(history, list):
+                history = []
+            group_message_history[int(raw_chat_id)] = deque(
+                (
+                    item for item in history[-DELETE_TRACK_LIMIT:]
+                    if isinstance(item, dict)
+                    and "id" in item and "date" in item
+                ),
+                maxlen=DELETE_TRACK_LIMIT,
+            )
+        except (TypeError, ValueError):
+            logger.warning("Invalid saved message history for group %s", raw_chat_id)
+
+
 # استعادة سجل الرسائل من التخزين الدائم حتى يستمر أمر التنظيف بعد إعادة التشغيل.
-for _chat_id, _info in data.get("chats", {}).items():
-    _history = _info.get("message_history", [])
-    if isinstance(_history, list):
-        group_message_history[int(_chat_id)] = deque(
-            (
-                item for item in _history[-DELETE_TRACK_LIMIT:]
-                if isinstance(item, dict)
-                and "id" in item and "date" in item
-            ),
-            maxlen=DELETE_TRACK_LIMIT,
-        )
+rebuild_group_message_history()
 
 
 def save_data():
@@ -370,6 +407,13 @@ def restore_group_backup(chat_id, backup_path):
         raise ValueError("Backup does not belong to this group")
     data.setdefault("chats", {})[str(int(chat_id))] = payload["group"]
     chat_data(chat_id)
+    rebuild_group_message_history(chat_id)
+    chat_id_int = int(chat_id)
+    for tracker in (spam_tracker, duplicate_tracker):
+        for key in list(tracker):
+            if isinstance(key, tuple) and key[0] == chat_id_int:
+                tracker.pop(key, None)
+    raid_join_tracker.pop(chat_id_int, None)
     save_data()
 
 
@@ -1073,8 +1117,11 @@ async def show_role_assignment(message, chat_id, actor, target, role, context):
     actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
     target_level = ROLE_ORDER.index(target_role) if target_role in ROLE_ORDER else 99
     new_level = ROLE_ORDER.index(role)
-    if actor_level > new_level or (target_role in ROLE_ORDER and actor_level >= target_level):
-        await message.reply_text("⛔ ما تگدر تمنح رتبة أعلى من رتبتك أو تعدّل رتبة مساوية/أعلى منك.")
+    if (
+        (actor_role != "owner" and actor_level >= new_level)
+        or (target_role in ROLE_ORDER and actor_level >= target_level)
+    ):
+        await message.reply_text("⛔ ما تگدر تمنح رتبة مساوية أو أعلى من رتبتك، ولا تعدّل رتبة مساوية/أعلى منك.")
         return
 
     info = chat_data(chat_id)
@@ -1128,6 +1175,12 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
         old = info["roles"].get(str(target.id), {})
         if old.get("role") != role:
             await message.reply_text("ℹ️ هذا الشخص لا يحمل هذه الرتبة داخل PARADOX 404.")
+            return True
+        actor_role = "owner" if await is_group_owner(chat_id, actor.id, context) else assigned_role(chat_id, actor.id)
+        actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
+        target_level = ROLE_ORDER.index(role)
+        if actor_level >= target_level:
+            await message.reply_text("⛔ ما تگدر تسحب رتبة مساوية أو أعلى من رتبتك.")
             return True
         info["roles"].pop(str(target.id), None)
         save_data()
@@ -1806,13 +1859,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await has_permission(chat_id, user.id, "protection", context):
             await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
             return
-        if lock_name not in LOCK_TYPES:
-            await query.answer("نوع حماية غير معروف.", show_alert=True)
-            return
-        info = chat_data(chat_id)
-        info["locks"][lock_name] = not bool(info["locks"].get(lock_name, False))
+        if lock_name == "bots":
+            info = chat_data(chat_id)
+            info["bot_join_monitor"] = not bool(info.get("bot_join_monitor", True))
+            label = "مراقبة دخول البوتات"
+        else:
+            if lock_name not in LOCK_TYPES:
+                await query.answer("نوع حماية غير معروف.", show_alert=True)
+                return
+            info = chat_data(chat_id)
+            info["locks"][lock_name] = not bool(info["locks"].get(lock_name, False))
+            label = LOCK_TYPES[lock_name]
         save_data()
-        log_action(chat_id, user, f"تغيير حماية: {LOCK_TYPES[lock_name]}")
+        log_action(chat_id, user, f"تغيير حماية: {label}")
         await query.answer("تم تحديث الحماية.")
         await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
         return
@@ -2181,6 +2240,10 @@ async def import_data_backup(update, context):
             os.fsync(output.fileno())
         os.replace(temp_path, DATA_FILE)
         data = candidate
+        rebuild_group_message_history()
+        spam_tracker.clear()
+        duplicate_tracker.clear()
+        raid_join_tracker.clear()
         await message.reply_text(
             "✅ تم استيراد النسخة الاحتياطية بنجاح وحفظ بيانات المجموعات."
         )
@@ -2336,6 +2399,16 @@ async def admin_action(update, context, action):
         return
 
     target_role = assigned_role(chat.id, target.id)
+    target_member = await get_member(chat.id, target.id, context)
+    actor_member = await get_member(chat.id, actor.id, context)
+    if (
+        target_member
+        and target_member.status == "administrator"
+        and (not actor_member or actor_member.status not in ("administrator", "creator"))
+    ):
+        await message.reply_text("⛔ ما تگدر تنفذ إجراء على مشرف تيليجرام من رتبة أدنى.")
+        log_action(chat.id, actor, "محاولة إجراء على مشرف تيليجرام", target)
+        return
     if await is_group_owner(chat.id, target.id, context):
         await message.reply_text("⛔ ما أگدر أنفذ عقوبة على منشئ المجموعة أو مالكها.")
         return
@@ -2501,9 +2574,17 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
     ):
         return
     info = chat_data(chat_id)
-    info["locks"][lock_name] = bool(enabled)
-    save_data()
-    if lock_name == "spam":
+    if lock_name != "bots":
+        info["locks"][lock_name] = bool(enabled)
+    if lock_name == "bots":
+        info["bot_join_monitor"] = bool(enabled)
+        reply = (
+            "✅ تم تشغيل مراقبة دخول البوتات."
+            if enabled else
+            "✅ تم إيقاف مراقبة دخول البوتات."
+        )
+        action = "تشغيل مراقبة دخول البوتات" if enabled else "إيقاف مراقبة دخول البوتات"
+    elif lock_name == "spam":
         reply = (
             "✅ تم تشغيل حماية السبام."
             if enabled else
@@ -2515,6 +2596,7 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
         reply = f"✅ تم {state} {LOCK_TYPES[lock_name]}."
         action = f"{state} {LOCK_TYPES[lock_name]}"
 
+    save_data()
     await message.reply_text(reply)
     log_action(chat_id, actor, action)
 
@@ -3785,6 +3867,13 @@ async def handle_group_text_commands(update, context):
         log_action(chat.id, user, "تفعيل الترحيب" if enabled else "إيقاف الترحيب")
         return True
 
+    if key in ("قفل مراقبة دخول البوتات", "قفل bots"):
+        await set_lock(message, chat.id, user, "bots", True, context)
+        return True
+    if key in ("فتح مراقبة دخول البوتات", "فتح bots"):
+        await set_lock(message, chat.id, user, "bots", False, context)
+        return True
+
     for lock_name, label in LOCK_TYPES.items():
         if (
             key in (f"قفل {label}", f"قفل {lock_name}")
@@ -4262,7 +4351,12 @@ async def moderate(update, context):
         await search_song(message, chat.id, song_match.group(1))
         return
 
-    if await is_admin(chat.id, user.id, context):
+    # كل الرتب المعينة داخل PARADOX 404 تُعامل كفريق إدارة،
+    # فلا تتعرض لعقوبات الحماية التلقائية بسبب رسائلها.
+    if (
+        await is_admin(chat.id, user.id, context)
+        or assigned_role(chat.id, user.id) in ROLE_ORDER
+    ):
         await nexus_ai_reply(message, chat.id, user, text)
         return
 
