@@ -2082,7 +2082,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "جدولة رسالة 2h نص / الرسائل المجدولة\n"
             "إلغاء رسالة مجدولة رقم / تصدير السجل\n\n"
             "🧠 نيكسوس والوسائط والألعاب\n"
-            "يا نيكسوس سؤالك / يوت ثم اسم الأغنية (Jamendo) / الألعاب\n\n"
+            "يا نيكسوس سؤالك / يوت ثم اسم الأغنية (Jamendo) / الألعاب\n"
+            "/addsong و /delsong لإدارة مكتبة المجموعة الصوتية\n\n"
             "الأوامر تعمل حسب رتبتك وصلاحياتك، وبعضها يتطلب الرد على رسالة العضو.",
             reply_markup=back_keyboard(),
         )
@@ -2213,9 +2214,8 @@ async def private_settings_text(update, context):
     else:
         await message.reply_text(
             "أوامر المالك:\n"
-            "تفعيل الأغاني\n"
-            "تعطيل الأغاني\n"
-            "حالة الأغاني\n\n"
+            "إعداد البحث الموسيقي داخل المجموعة:\n"
+            "تفعيل الأغاني / تعطيل الأغاني / حالة الأغاني\n\n"
             "أوامر الاشتراك:\n"
             "تفعيل الاشتراك @قناتك\n"
             "تعطيل الاشتراك\n"
@@ -4027,7 +4027,7 @@ def _nexus_store_fact(info, text, user, scope="user"):
         if (
             isinstance(fact, dict)
             and fact.get("scope") == scope
-            and str(fact.get("user_id")) == user_id
+            and (scope == "group" or str(fact.get("user_id")) == user_id)
             and normalize_message(str(fact.get("text", ""))) == normalized
         ):
             return False
@@ -4044,7 +4044,7 @@ def _nexus_store_fact(info, text, user, scope="user"):
     return True
 
 
-async def nexus_ai_reply(message, chat_id, user, text):
+async def nexus_ai_reply(message, chat_id, user, text, context):
     """NEXUS: Gemini replies with isolated group context and durable, permission-aware memories."""
     info = chat_data(chat_id)
     if not info.get("nexus_ai_enabled", True):
@@ -4520,15 +4520,15 @@ async def moderate(update, context):
         return
 
     if await is_admin(chat.id, user.id, context):
-        await nexus_ai_reply(message, chat.id, user, text)
+        await nexus_ai_reply(message, chat.id, user, text, context)
         return
 
     locks = chat_data(chat.id)["locks"]
     if str(user.id) in chat_data(chat.id).get("protection_exemptions", []):
-        await nexus_ai_reply(message, chat.id, user, text)
+        await nexus_ai_reply(message, chat.id, user, text, context)
         return
     if not chat_data(chat.id).get("protection_enabled", True):
-        await nexus_ai_reply(message, chat.id, user, text)
+        await nexus_ai_reply(message, chat.id, user, text, context)
         return
     blocked = None
 
@@ -4635,7 +4635,7 @@ async def moderate(update, context):
             return
 
     # بعد اجتياز فحوص الحماية، يسمح لنيكسوس بالرد عند مناداته فقط.
-    await nexus_ai_reply(message, chat.id, user, text)
+    await nexus_ai_reply(message, chat.id, user, text, context)
 
 
 # =========================================================
