@@ -469,6 +469,7 @@ def chat_data(chat_id):
     )
     info.setdefault("nexus_silenced_users", {})
     info.setdefault("message_history", [])
+    info.setdefault("pending_delete_request", None)
     info.setdefault("game_scores", {})
     info.setdefault("game_state", None)
     info.setdefault("reports", [])
@@ -508,9 +509,13 @@ def track_group_message(message):
     if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
 
+    sender = message.from_user
     item = {
         "id": message.message_id,
         "date": message.date.timestamp(),
+        "user_id": sender.id if sender else None,
+        "name": sender.full_name if sender else "",
+        "username": sender.username if sender and sender.username else "",
     }
     history = group_message_history[message.chat.id]
     history.append(item)
@@ -604,6 +609,170 @@ async def delete_recent_messages(message, chat_id, actor, amount, context):
         chat_id, actor,
         f"حذف جماعي: {deleted_count} رسالة",
     )
+
+
+async def handle_nexus_delete_request(message, chat_id, user, context, text):
+    """Owner-approved, group-scoped deletion requests for NEXUS."""
+    info = chat_data(chat_id)
+    normalized = normalize_game_text(text or "")
+
+    pending = info.get("pending_delete_request")
+
+    # The primary bot owner approves/rejects only the pending request in this group.
+    if normalized in ("موافق", "اي موافق", "نعم موافق", "نفذ", "ارفض", "رفض", "الغ الطلب", "إلغاء الطلب"):
+        if not pending:
+            return False
+        if not is_bot_owner(user.id):
+            await message.reply_text("⛔ الموافقة أو الرفض على طلب الحذف من صلاحية مالك البوت الأساسي فقط.")
+            return True
+
+        if normalized in ("ارفض", "رفض", "الغ الطلب", "إلغاء الطلب"):
+            info["pending_delete_request"] = None
+            save_data()
+            await message.reply_text("🛑 تم رفض طلب الحذف وإلغاؤه. ما حذفت أي رسالة.")
+            return True
+
+        if pending.get("status") != "pending":
+            await message.reply_text("⏳ طلب الحذف قيد المعالجة بالفعل.")
+            return True
+
+        try:
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if (
+                bot_member.status not in ("administrator", "creator")
+                or not getattr(bot_member, "can_delete_messages", False)
+            ):
+                await message.reply_text("❌ ما أگدر أنفذ الطلب؛ لازم البوت يكون مشرفاً وعنده صلاحية حذف الرسائل.")
+                return True
+        except TelegramError:
+            await message.reply_text("❌ ما كدرت أتأكد من صلاحيات حذف الرسائل. الطلب بعده محفوظ وتگدر تعيد الموافقة بعد إصلاح الصلاحيات.")
+            return True
+
+        message_ids = [
+            int(value) for value in pending.get("message_ids", [])
+            if str(value).isdigit()
+        ]
+        if not message_ids:
+            info["pending_delete_request"] = None
+            save_data()
+            await message.reply_text("ℹ️ ما بقت رسائل مطابقة للحذف.")
+            return True
+
+        pending["status"] = "processing"
+        save_data()
+
+        deleted_ids = set()
+        failed_count = 0
+        for message_id in message_ids:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+                deleted_ids.add(message_id)
+                await asyncio.sleep(0.05)
+            except TelegramError:
+                failed_count += 1
+
+        history = group_message_history[chat_id]
+        group_message_history[chat_id] = deque(
+            (item for item in history if int(item.get("id", 0)) not in deleted_ids),
+            maxlen=DELETE_TRACK_LIMIT,
+        )
+        info["message_history"] = list(group_message_history[chat_id])
+        info["pending_delete_request"] = None
+        save_data()
+
+        log_action(
+            chat_id,
+            user,
+            f"حذف بموافقة مالك البوت: {len(deleted_ids)} رسالة",
+        )
+        result_text = (
+            "🗑️ اكتمل طلب الحذف بموافقتك.\n"
+            f"✅ الرسائل المحذوفة: {len(deleted_ids)}\n"
+            f"⚠️ الرسائل التي تعذر حذفها: {failed_count}"
+        )
+        await message.reply_text(result_text)
+        return True
+
+    # Accept only explicit requests addressed to NEXUS.
+    self_request = re.fullmatch(
+        r"(?:يا\s+)?(?:نيكسوس|نكسوس)\s+(?:احذف|امسح)\s+(?:كل\s+)?رسائلي",
+        normalized,
+    )
+    named_request = re.fullmatch(
+        r"(?:يا\s+)?(?:نيكسوس|نكسوس)\s+(?:احذف|امسح)\s+(?:كل\s+)?رسائل\s+(.+)",
+        normalized,
+    )
+    if not self_request and not named_request:
+        return False
+
+    if pending:
+        await message.reply_text("⏳ أكو طلب حذف سابق بعده بانتظار موافقة المالك. خلّصوه أولاً.")
+        return True
+
+    history = list(group_message_history[chat_id])
+    now = time.time()
+    eligible = [
+        item for item in history
+        if isinstance(item, dict)
+        and item.get("user_id") is not None
+        and str(item.get("user_id")).isdigit()
+        and 0 <= now - float(item.get("date", 0)) < DELETE_MAX_AGE
+    ]
+
+    if self_request:
+        target_id = user.id
+        target_name = user.full_name
+    else:
+        requested_name = named_request.group(1).strip()
+        requested_key = normalize_game_text(requested_name.lstrip("@"))
+        matches = {}
+        for item in eligible:
+            stored_name = normalize_game_text(str(item.get("name", "")))
+            stored_username = normalize_game_text(str(item.get("username", "")).lstrip("@"))
+            if requested_key and requested_key in (stored_name, stored_username):
+                matches[str(item["user_id"])] = str(item.get("name") or item.get("username") or requested_name)
+        if not matches:
+            await message.reply_text("ما لگيت عضواً بهذا الاسم ضمن سجل الرسائل المتاح. لازم نيكسوس يشوف رسائله أولاً، وبعدها يگدر يميّزه.")
+            return True
+        if len(matches) > 1:
+            names = "، ".join(sorted(set(matches.values()))[:8])
+            await message.reply_text("الاسم متكرر وما أريد أحذف رسائل الشخص الغلط. حدّد العضو بالرد على رسالته أو اكتب اسمه بشكل أدق.\nالأسماء المطابقة: " + names)
+            return True
+        target_id, target_name = next(iter(matches.items()))
+
+    selected = [
+        item for item in eligible
+        if str(item.get("user_id")) == str(target_id)
+        and int(item.get("id", 0)) != message.message_id
+    ]
+    selected.sort(key=lambda item: float(item.get("date", 0)), reverse=True)
+    selected = selected[:DELETE_MAX_MESSAGES]
+    message_ids = [int(item["id"]) for item in selected if str(item.get("id", "")).isdigit()]
+
+    if not message_ids:
+        await message.reply_text("ما لگيت رسائل قابلة للحذف لهذا العضو خلال آخر 48 ساعة من سجل نيكسوس.")
+        return True
+
+    info["pending_delete_request"] = {
+        "status": "pending",
+        "target_id": int(target_id),
+        "target_name": str(target_name)[:120],
+        "requested_by": int(user.id),
+        "requested_by_name": str(user.full_name)[:120],
+        "message_ids": message_ids,
+        "created_at": int(now),
+    }
+    save_data()
+
+    await message.reply_text(
+        "📝 وصل طلب حذف الرسائل.\n"
+        f"👤 العضو: {target_name}\n"
+        f"📨 عدد الرسائل المحددة: {len(message_ids)}\n"
+        "🔐 بانتظار موافقة مالك البوت الأساسي داخل المجموعة.\n"
+        "للتنفيذ يكتب المالك: موافق\n"
+        "للإلغاء يكتب: ارفض"
+    )
+    return True
 
 
 # =========================================================
@@ -4845,6 +5014,10 @@ async def moderate(update, context):
     track_group_message(message)
     chat_data(chat.id)["title"] = chat.title or str(chat.id)
     await count_activity(chat.id, user)
+
+    # معالجة طلبات الحذف وموافقة مالك البوت قبل أوامر المجموعة والذكاء الاصطناعي.
+    if await handle_nexus_delete_request(message, chat.id, user, context, text):
+        return
 
     if await handle_group_text_commands(update, context):
         return
