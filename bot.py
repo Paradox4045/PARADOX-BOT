@@ -2980,7 +2980,19 @@ def download_permitted_youtube_mp3(query, output_dir):
                 result["source"] = "YouTube"
                 result["search_route"] = route_name
                 return result
-        except Exception:
+        except Exception as error:
+            error_text = str(error).casefold()
+            blocked_markers = (
+                "sign in to confirm", "not a bot", "confirm you’re not",
+                "confirm you're not", "http error 429", "too many requests",
+                "bot detection",
+            )
+            if any(marker in error_text for marker in blocked_markers):
+                logger.warning(
+                    "YouTube blocked this connection on route '%s'; stopping retries",
+                    route_name,
+                )
+                break
             logger.exception(
                 "YouTube search route '%s' failed; trying the next route",
                 route_name,
@@ -3022,9 +3034,24 @@ async def search_song(message, chat_id, query):
             timeout=180,
         )
         if not result:
-            await status_message.edit_text(
-                "ما حصلت ملفاً صوتياً متاحاً للتنزيل من المصادر المفتوحة حالياً. جرّب اسم الأغنية أو اسم الفنان."
-            )
+            try:
+                matches = await asyncio.to_thread(youtube_search, query)
+            except Exception as search_error:
+                logger.warning("YouTube link search failed: %s", search_error)
+                matches = []
+
+            if matches:
+                lines = [
+                    "🎵 ما حصلت ملفاً صوتياً مرخّصاً للتنزيل، بس هاي نتائج يوتيوب:",
+                    "",
+                ]
+                for index, item in enumerate(matches[:5], 1):
+                    lines.append(f"{index}. {item['title']}\\n{item['url']}")
+                await status_message.edit_text("\\n".join(lines), disable_web_page_preview=True)
+            else:
+                await status_message.edit_text(
+                    "⚠️ يوتيوب حالياً مانع الخادم من جلب النتائج، لذلك ما گدرت أجهّز الصوت أو أعرض روابط. جرّب بعد فترة."
+                )
             return
 
         audio_path = Path(result["path"])
