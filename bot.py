@@ -2951,7 +2951,7 @@ def download_permitted_youtube_mp3(query, output_dir):
     explicitly marked Creative Commons. No third-party audio repositories
     are used. A failed search/inspection/download advances to the next route.
     """
-    clean_query = re.sub(r"\\s+", " ", (query or "")).strip()
+    clean_query = " ".join((query or "").split())
     if not clean_query:
         return None
 
@@ -3008,7 +3008,7 @@ async def search_song(message, chat_id, query):
         return
 
     status_message = await message.reply_text(
-        f"🔎 نيكسوس يبحث بالأكثر من مصدر: {query}"
+        f"🔎 نيكسوس يبحث عبر 10 مسارات من يوتيوب: {query}"
     )
     work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
     worker_task = None
