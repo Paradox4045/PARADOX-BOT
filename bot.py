@@ -2828,10 +2828,10 @@ def download_youtube_cc_mp3(query, output_dir):
         "skip_download": True,
         "extract_flat": "in_playlist",
         "noplaylist": True,
-        "socket_timeout": 20,
+        "socket_timeout": 8,
     }
     with YoutubeDL(search_options) as ydl:
-        search = ydl.extract_info(f"ytsearch5:{query}", download=False)
+        search = ydl.extract_info(f"ytsearch2:{query}", download=False)
 
     candidates = (search or {}).get("entries") or []
     for candidate in candidates:
