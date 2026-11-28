@@ -4943,6 +4943,31 @@ async def error_handler(update, context):
     )
 
 
+def log_data_storage_location():
+    """تحقق تشخيصي فقط: لا ينقل ملف البيانات ولا يغيّر مساره تلقائياً."""
+    data_path = DATA_FILE.expanduser().resolve()
+    volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if not volume_path:
+        logger.warning(
+            "RAILWAY_VOLUME_MOUNT_PATH is not set; verify DATA_FILE uses persistent storage."
+        )
+        logger.info("PARADOX data file resolves to: %s", data_path)
+        return
+
+    volume_root = Path(volume_path).expanduser().resolve()
+    try:
+        data_path.relative_to(volume_root)
+    except ValueError:
+        logger.warning(
+            "DATA_FILE is outside the Railway volume. Current path: %s | volume: %s. "
+            "No automatic migration was performed to protect existing data.",
+            data_path,
+            volume_root,
+        )
+    else:
+        logger.info("Persistent PARADOX data file is inside Railway volume: %s", data_path)
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -4954,6 +4979,7 @@ def main():
             "وهو رقم حساب مالك البوت الأساسي."
         )
 
+    log_data_storage_location()
     app = Application.builder().token(BOT_TOKEN).post_init(start_background_tasks).build()
 
     app.add_handler(CommandHandler("start", start))
