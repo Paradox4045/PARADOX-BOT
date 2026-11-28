@@ -2050,17 +2050,56 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "ai_menu":
         await query.edit_message_text(
             "🧠 مركز الذكاء الاصطناعي — نيكسوس\n\n"
-            "هذا القسم مخصص لكل إعدادات وميزات الذكاء الاصطناعي، "
-            "ونضيف إليه الميزات الجديدة مستقبلاً.\n\n"
-            "⚙️ التحكم بذكاء المجموعة الحالية يتم من داخل المجموعة "
-            "بواسطة مالك المجموعة فقط:\n"
-            "• تفعيل الذكاء\n"
-            "• تعطيل الذكاء\n\n"
-            "عند إيقافه تتوقف ردود نيكسوس الذكية فقط، "
-            "وتبقى الحماية والإدارة ومكتبة الأغاني تعمل بشكل طبيعي.",
+            "هنا تگدر تتعرف على إعدادات نيكسوس وميزاته: "
+            "المحادثة الذكية، الذاكرة، التفاعل الاجتماعي، والتحكم بالتواصل.\n\n"
+            "اختار القسم اللي تريد:",
             reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ تشغيل وإيقاف الذكاء", callback_data="ai_control_info")],
+                [InlineKeyboardButton("🧠 ذاكرة نيكسوس", callback_data="ai_memory_info")],
                 [InlineKeyboardButton("🗣️ التفاعل الاجتماعي", callback_data="ai_social_info")],
+                [InlineKeyboardButton("👤 التحكم بالتواصل", callback_data="ai_contact_info")],
                 [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+            ]),
+        )
+
+    elif action == "ai_control_info":
+        await query.edit_message_text(
+            "⚙️ تشغيل وإيقاف ذكاء نيكسوس\n\n"
+            "مالك المجموعة فقط يگدر يتحكم بذكاء مجموعته من داخلها:\n\n"
+            "✅ للتشغيل: تفعيل الذكاء\n"
+            "🛑 للإيقاف: تعطيل الذكاء\n\n"
+            "الإعداد مستقل لكل مجموعة. عند الإيقاف تتوقف ردود Gemini، "
+            "وتبقى الحماية والإدارة وبقية وظائف البوت شغالة.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع إلى الذكاء الاصطناعي", callback_data="ai_menu")],
+            ]),
+        )
+
+    elif action == "ai_memory_info":
+        await query.edit_message_text(
+            "🧠 ذاكرة نيكسوس\n\n"
+            "نيكسوس يحتفظ بسياق المحادثة الأخيرة وذكريات طويلة الأمد "
+            "منفصلة لكل مجموعة، وذكريات العضو الخاصة ما تنعرض لبقية الأعضاء.\n\n"
+            "💾 حفظ معلومة إلك: تذكر أني ...\n"
+            "📖 عرض ذكرياتك: نيكسوس شنو تتذكر عني؟\n"
+            "🗑️ حذف ذكرياتك: نيكسوس امسح ذاكرتي\n\n"
+            "👥 ذاكرة المجموعة (للمالك أو المشرف): ذاكرة المجموعة\n"
+            "حفظ قرار أو قانون للمجموعة: تذكر للمجموعة ...",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع إلى الذكاء الاصطناعي", callback_data="ai_menu")],
+            ]),
+        )
+
+    elif action == "ai_contact_info":
+        await query.edit_message_text(
+            "👤 التحكم بالتواصل مع نيكسوس\n\n"
+            "مالك المجموعة يگدر يحدد عضو يتجاهله نيكسوس أو يرجع يتواصل وياه.\n\n"
+            "🔇 تجاهل عضو: يا نيكسوس تجاهل ويا @username\n"
+            "✅ السماح بالتواصل: يا نيكسوس احچي ويا @username\n\n"
+            "لازم العضو يكون مرسل رسالة بالمجموعة حتى يتعرف عليه نيكسوس. "
+            "والتحكم يخص المجموعة الحالية فقط.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع إلى الذكاء الاصطناعي", callback_data="ai_menu")],
             ]),
         )
 
