@@ -452,6 +452,8 @@ def chat_data(chat_id):
     info.setdefault("protection_enabled", True)
     info.setdefault("warning_limit", WARN_LIMIT)
     info.setdefault("bot_paused", False)
+    # إيقاف شامل مستقل لكل مجموعة؛ لا يمس إعدادات أو بيانات المجموعات الأخرى.
+    info.setdefault("nexus_enabled", True)
     info.setdefault("logs", [])
     info.setdefault("welcome", True)
     info.setdefault("nexus_ai_enabled", True)
@@ -803,6 +805,51 @@ async def is_group_owner(chat_id, user_id, context):
         (member and member.status == "creator")
         or assigned_role(chat_id, user_id) == "owner"
     )
+
+
+def nexus_is_enabled(chat_id):
+    """حالة تشغيل نيكسوس محفوظة بصورة مستقلة لكل مجموعة، ومفعّلة افتراضياً."""
+    info = data.get("chats", {}).get(str(chat_id), {})
+    return bool(info.get("nexus_enabled", True))
+
+
+async def handle_nexus_control(update, context):
+    """أمرا التفعيل والتعطيل الوحيدان المستثنيان من الإيقاف الشامل."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if (
+        not message or not chat or not user
+        or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
+    ):
+        return False
+
+    command = " ".join(normalize_game_text(message.text or "").split())
+    if command not in ("تفعيل نيكسوس", "تعطيل نيكسوس"):
+        return False
+
+    authorized = is_bot_owner(user.id) or await is_group_owner(chat.id, user.id, context)
+    if not authorized:
+        if nexus_is_enabled(chat.id):
+            await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة أو مالك البوت الأساسي.")
+        return True
+
+    enabled = command == "تفعيل نيكسوس"
+    info = chat_data(chat.id)
+    current = bool(info.get("nexus_enabled", True))
+    if current == enabled:
+        status = "مفعّل بالفعل" if enabled else "معطّل بالفعل"
+        await message.reply_text(f"ℹ️ نيكسوس {status} في هذه المجموعة.")
+        return True
+
+    info["nexus_enabled"] = enabled
+    save_data()
+    log_action(chat.id, user, "تفعيل نيكسوس بالكامل" if enabled else "تعطيل نيكسوس بالكامل")
+    if enabled:
+        await message.reply_text("✅ تم تفعيل نيكسوس بالكامل في هذه المجموعة. رجعنا! 🔥")
+    else:
+        await message.reply_text("⛔ تم تعطيل نيكسوس بالكامل في هذه المجموعة.")
+    return True
 
 
 async def is_admin(chat_id, user_id, context):
@@ -1467,6 +1514,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not user:
         return
 
+    if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(message.chat.id):
+        return
+
     if message.chat.type == ChatType.PRIVATE:
         if (
             not is_bot_owner(user.id)
@@ -1489,6 +1539,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     action = query.data or ""
+
+    if (
+        query.message
+        and query.message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+        and not nexus_is_enabled(query.message.chat.id)
+    ):
+        await query.answer()
+        return
 
     # لا تسمح للأزرار الداخلية بتجاوز بوابة الاشتراك الإجباري في الخاص.
     if (
@@ -3148,6 +3206,8 @@ async def add_song(update, context):
     user = update.effective_user
     if not message or not chat or not user:
         return
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(chat.id):
+        return
     if not await is_group_owner(chat.id, user.id, context):
         await message.reply_text("⛔ إضافة الأغاني للمكتبة خاصة بمالك المجموعة.")
         return
@@ -3178,6 +3238,8 @@ async def delete_song(update, context):
     chat = update.effective_chat
     user = update.effective_user
     if not message or not chat or not user:
+        return
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(chat.id):
         return
     if not await is_group_owner(chat.id, user.id, context):
         await message.reply_text("⛔ حذف أغاني المكتبة خاص بمالك المجموعة.")
@@ -3601,6 +3663,8 @@ async def scheduled_group_worker(application):
         for raw_chat_id in list(data.get("chats", {})):
             try:
                 chat_id = int(raw_chat_id)
+                if not nexus_is_enabled(chat_id):
+                    continue
                 info = chat_data(chat_id)
                 due = [item for item in info.get("scheduled_messages", []) if int(item.get("due", now + 1)) <= now]
                 if due:
@@ -4802,6 +4866,8 @@ async def monitor_group_joins(update, context):
         return
     if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
+    if not nexus_is_enabled(chat.id):
+        return
 
     old_status = member_update.old_chat_member.status
     new_status = member_update.new_chat_member.status
@@ -4950,6 +5016,8 @@ async def welcome_new_members(update, context):
     message = update.effective_message
     chat = update.effective_chat
     if not message or not chat or not message.new_chat_members:
+        return
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(chat.id):
         return
     welcome_enabled = chat_data(chat.id).get("welcome", True)
     for member in message.new_chat_members:
@@ -5106,6 +5174,10 @@ async def moderate(update, context):
         return
 
     text = message.text or message.caption or ""
+    if await handle_nexus_control(update, context):
+        return
+    if not nexus_is_enabled(chat.id):
+        return
 
     track_group_message(message)
     chat_data(chat.id)["title"] = chat.title or str(chat.id)
@@ -5571,6 +5643,9 @@ async def game_callback(update, context):
     if not message or message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         await query.answer("الألعاب تعمل داخل المجموعة فقط.", show_alert=True)
         return
+    if not nexus_is_enabled(message.chat.id):
+        await query.answer()
+        return
     action = query.data or ""
     chat_id = message.chat.id
     user = query.from_user
@@ -5657,6 +5732,8 @@ async def grant_unmute(update, context):
     user = update.effective_user
     if not message or not chat or not user:
         return
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(chat.id):
+        return
     if not await is_group_owner(chat.id, user.id, context):
         await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
         return
@@ -5686,6 +5763,8 @@ async def revoke_unmute(update, context):
     chat = update.effective_chat
     user = update.effective_user
     if not message or not chat or not user:
+        return
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and not nexus_is_enabled(chat.id):
         return
     if not await is_group_owner(chat.id, user.id, context):
         await message.reply_text("⛔ هذا الأمر خاص بمالك المجموعة.")
