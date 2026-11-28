@@ -2796,19 +2796,56 @@ async def list_tracked(chat_id, kind):
 
 
 async def show_top_users(chat_id):
+    """يعرض أفضل 20 عضواً في هذه المجموعة بترتيب واضح من الأعلى نشاطاً."""
+    info = chat_data(chat_id)
     ranked = sorted(
-        chat_data(chat_id)["activity"].items(),
-        key=lambda item: int(item[1].get("count", 0)),
-        reverse=True,
+        (
+            (uid, record)
+            for uid, record in info.get("activity", {}).items()
+            if isinstance(record, dict) and int(record.get("count", 0) or 0) > 0
+        ),
+        key=lambda item: (
+            -int(item[1].get("count", 0) or 0),
+            str(item[1].get("name", "عضو")).casefold(),
+            str(item[0]),
+        ),
     )[:20]
+
     if not ranked:
-        return "📊 ماكو إحصائيات بعد."
-    lines = ["📊 أكثر 20 عضواً تفاعلاً:"]
-    for index, (uid, record) in enumerate(ranked, start=1):
-        lines.append(
-            f"{index}. {record.get('name', 'عضو')} — "
-            f"{int(record.get('count', 0))} رسالة"
+        return (
+            "📊 المتفاعلين\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "لحد الآن ماكو رسائل مسجلة حتى نرتب المتفاعلين."
         )
+
+    rank_marks = [
+        "🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟",
+    ]
+    lines = [
+        "📊 قائمة المتفاعلين",
+        f"『 {str(info.get('title') or 'المجموعة')[:60]} 』",
+        "🏆 أكثر 20 عضواً إرسالاً للرسائل",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for index, (uid, record) in enumerate(ranked, start=1):
+        mark = rank_marks[index - 1] if index <= len(rank_marks) else f"{index}."
+        name = re.sub(r"\s+", " ", str(record.get("name") or "عضو")).strip()[:55]
+        count = int(record.get("count", 0) or 0)
+        if index == 1:
+            position = "الأول"
+        elif index == 2:
+            position = "الثاني"
+        elif index == 3:
+            position = "الثالث"
+        else:
+            position = f"المركز {index}"
+        lines.append(f"{mark} {position} — {name}\n   💬 {count:,} رسالة")
+
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━",
+        "⚡ NEXUS • PARADOX 404",
+    ])
     return "\n".join(lines)
 
 
