@@ -2574,8 +2574,8 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
     ):
         return
     info = chat_data(chat_id)
-    info["locks"][lock_name] = bool(enabled)
-    save_data()
+    if lock_name != "bots":
+        info["locks"][lock_name] = bool(enabled)
     if lock_name == "bots":
         info["bot_join_monitor"] = bool(enabled)
         reply = (
