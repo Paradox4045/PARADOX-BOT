@@ -2596,6 +2596,7 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
         reply = f"✅ تم {state} {LOCK_TYPES[lock_name]}."
         action = f"{state} {LOCK_TYPES[lock_name]}"
 
+    save_data()
     await message.reply_text(reply)
     log_action(chat_id, actor, action)
 
