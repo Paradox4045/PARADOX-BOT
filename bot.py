@@ -619,14 +619,14 @@ async def handle_nexus_delete_request(message, chat_id, user, context, text):
     pending = info.get("pending_delete_request")
 
     # The primary bot owner approves/rejects only the pending request in this group.
-    if normalized in ("موافق", "اي موافق", "نعم موافق", "نفذ", "ارفض", "رفض", "الغ الطلب", "إلغاء الطلب"):
+    if normalized in ("موافق", "اي موافق", "نعم موافق", "نفذ", "ارفض", "رفض", "الغ الطلب", "الغاء الطلب"):
         if not pending:
             return False
         if not is_bot_owner(user.id):
             await message.reply_text("⛔ الموافقة أو الرفض على طلب الحذف من صلاحية مالك البوت الأساسي فقط.")
             return True
 
-        if normalized in ("ارفض", "رفض", "الغ الطلب", "إلغاء الطلب"):
+        if normalized in ("ارفض", "رفض", "الغ الطلب", "الغاء الطلب"):
             info["pending_delete_request"] = None
             save_data()
             await message.reply_text("🛑 تم رفض طلب الحذف وإلغاؤه. ما حذفت أي رسالة.")
