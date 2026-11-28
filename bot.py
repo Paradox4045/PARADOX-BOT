@@ -3971,7 +3971,7 @@ def _nexus_memory_tokens(text):
     }
 
 
-def _nexus_relevant_facts(info, user_id, query, limit=6):
+def _nexus_relevant_facts(info, user_id, query, limit=6, include_user=False):
     query_tokens = _nexus_memory_tokens(query)
     ranked = []
     facts = info.get("nexus_facts", [])
@@ -3982,7 +3982,7 @@ def _nexus_relevant_facts(info, user_id, query, limit=6):
         if not isinstance(fact, dict):
             continue
         scope = fact.get("scope", "user")
-        if scope == "user" and str(fact.get("user_id")) != str(user_id):
+        if scope == "user" and (not include_user or str(fact.get("user_id")) != str(user_id)):
             continue
         if scope not in ("user", "group"):
             continue
@@ -4005,7 +4005,7 @@ def _nexus_relevant_facts(info, user_id, query, limit=6):
             continue
         scope = fact.get("scope", "user")
         if scope == "group" or (
-            scope == "user" and str(fact.get("user_id")) == str(user_id)
+            include_user and scope == "user" and str(fact.get("user_id")) == str(user_id)
         ):
             recent.append((int(fact.get("created_at", 0)), str(fact.get("text", "")).strip()))
     recent.sort(reverse=True)
@@ -4079,13 +4079,20 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
             and fact.get("scope") == "user"
             and str(fact.get("user_id")) == str(user.id)
         ]
-        if own_facts:
-            await message.reply_text(
-                "هاي المعلومات اللي حافظها إلك بهالمجموعة:\n"
-                + "\n".join(f"• {item}" for item in own_facts[-12:])
-            )
-        else:
+        if not own_facts:
             await message.reply_text("لحد هسه ما عندي ذكريات محفوظة إلك بهالمجموعة.")
+            return True
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=(
+                    "هاي المعلومات اللي حافظها إلك بذاكرة نيكسوس بهالمجموعة:\n"
+                    + "\n".join(f"• {item}" for item in own_facts[-12:])
+                ),
+            )
+            await message.reply_text("دزيتلك ذكرياتك بالخاص حتى تبقى معلوماتك خاصة. 📩")
+        except TelegramError:
+            await message.reply_text("افتح محادثتي الخاصة واضغط Start، وبعدها أگدر أرسللك ذكرياتك بأمان.")
         return True
 
     if normalized_prompt in ("امسح ذاكرتي", "احذف ذاكرتي", "انس ذاكرتي"):
@@ -4168,7 +4175,7 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
             "parts": [{"text": str(item.get("text", ""))[:1800]}],
         })
 
-    relevant_facts = _nexus_relevant_facts(info, user.id, prompt)
+    relevant_facts = _nexus_relevant_facts(info, user.id, prompt, include_user=False)
     if relevant_facts:
         contents.insert(0, {
             "role": "user",
