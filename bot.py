@@ -4711,14 +4711,20 @@ async def moderate(update, context):
         return
 
     if await is_admin(chat.id, user.id, context):
+        if text:
+            track_nexus_group_context(chat.id, user, text)
         await nexus_ai_reply(message, chat.id, user, text, context)
         return
 
     locks = chat_data(chat.id)["locks"]
     if str(user.id) in chat_data(chat.id).get("protection_exemptions", []):
+        if text:
+            track_nexus_group_context(chat.id, user, text)
         await nexus_ai_reply(message, chat.id, user, text, context)
         return
     if not chat_data(chat.id).get("protection_enabled", True):
+        if text:
+            track_nexus_group_context(chat.id, user, text)
         await nexus_ai_reply(message, chat.id, user, text, context)
         return
     blocked = None
