@@ -1117,8 +1117,11 @@ async def show_role_assignment(message, chat_id, actor, target, role, context):
     actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
     target_level = ROLE_ORDER.index(target_role) if target_role in ROLE_ORDER else 99
     new_level = ROLE_ORDER.index(role)
-    if actor_level > new_level or (target_role in ROLE_ORDER and actor_level >= target_level):
-        await message.reply_text("⛔ ما تگدر تمنح رتبة أعلى من رتبتك أو تعدّل رتبة مساوية/أعلى منك.")
+    if (
+        (actor_role != "owner" and actor_level >= new_level)
+        or (target_role in ROLE_ORDER and actor_level >= target_level)
+    ):
+        await message.reply_text("⛔ ما تگدر تمنح رتبة مساوية أو أعلى من رتبتك، ولا تعدّل رتبة مساوية/أعلى منك.")
         return
 
     info = chat_data(chat_id)
@@ -1172,6 +1175,12 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
         old = info["roles"].get(str(target.id), {})
         if old.get("role") != role:
             await message.reply_text("ℹ️ هذا الشخص لا يحمل هذه الرتبة داخل PARADOX 404.")
+            return True
+        actor_role = "owner" if await is_group_owner(chat_id, actor.id, context) else assigned_role(chat_id, actor.id)
+        actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
+        target_level = ROLE_ORDER.index(role)
+        if actor_role != "owner" and actor_level >= target_level:
+            await message.reply_text("⛔ ما تگدر تسحب رتبة مساوية أو أعلى من رتبتك.")
             return True
         info["roles"].pop(str(target.id), None)
         save_data()
