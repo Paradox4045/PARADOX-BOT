@@ -2058,7 +2058,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• تعطيل الذكاء\n\n"
             "عند إيقافه تتوقف ردود نيكسوس الذكية فقط، "
             "وتبقى الحماية والإدارة ومكتبة الأغاني تعمل بشكل طبيعي.",
-            reply_markup=back_keyboard(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗣️ التفاعل الاجتماعي", callback_data="ai_social_info")],
+                [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
+            ]),
+        )
+
+    elif action == "ai_social_info":
+        await query.edit_message_text(
+            "🗣️ التفاعل الاجتماعي — نيكسوس\n\n"
+            "يخلي نيكسوس يشارك بالنقاشات والأسئلة العامة من نفسه، "
+            "مو بس ينتظر أحد يناديه.\n\n"
+            "✅ للتفعيل داخل المجموعة (مالك المجموعة فقط):\n"
+            "تفعيل التفاعل الاجتماعي\n\n"
+            "🛑 للإيقاف:\n"
+            "ايقاف التفاعل الاجتماعي\n\n"
+            "📌 الميزة متوقفة افتراضياً، ولكل مجموعة إعدادها المستقل. "
+            "وحتى ما يزعج الأعضاء، يشارك بحدود وبفاصل زمني.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع", callback_data="ai_menu")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
+            ]),
         )
 
 
