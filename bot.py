@@ -729,7 +729,11 @@ async def handle_nexus_delete_request(message, chat_id, user, context, text):
         for item in eligible:
             stored_name = normalize_game_text(str(item.get("name", "")))
             stored_username = normalize_game_text(str(item.get("username", "")).lstrip("@"))
-            if requested_key and requested_key in (stored_name, stored_username):
+            if requested_key and (
+                requested_key == stored_name
+                or requested_key in stored_name.split()
+                or requested_key == stored_username
+            ):
                 matches[str(item["user_id"])] = str(item.get("name") or item.get("username") or requested_name)
         if not matches:
             await message.reply_text("ما لگيت عضواً بهذا الاسم ضمن سجل الرسائل المتاح. لازم نيكسوس يشوف رسائله أولاً، وبعدها يگدر يميّزه.")
