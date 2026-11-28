@@ -4324,6 +4324,7 @@ async def count_activity(chat_id, user):
     record["name"] = user.full_name
     record["username"] = (user.username or "").lower()
     record["count"] = int(record.get("count", 0)) + 1
+    record["last_seen"] = int(time.time())
     save_data()
 
 
@@ -4806,6 +4807,14 @@ async def monitor_group_joins(update, context):
         return
 
     info = chat_data(chat.id)
+    activity_record = info.setdefault("activity", {}).setdefault(
+        str(joined_user.id),
+        {"name": joined_user.full_name, "username": (joined_user.username or "").lower(), "count": 0},
+    )
+    activity_record["name"] = joined_user.full_name
+    activity_record["username"] = (joined_user.username or "").lower()
+    activity_record.setdefault("joined_at", int(time.time()))
+    save_data()
     if not info.get("raid_protection_enabled", True):
         return
 
@@ -5000,6 +5009,83 @@ async def unmute_all(update, context):
 # MODERATION HANDLER
 # =========================================================
 
+
+async def show_member_profile(message, chat_id, requester, context):
+    """يعرض بطاقة العضو وإحصاءاته المحسوبة داخل المجموعة الحالية فقط."""
+    target = (
+        message.reply_to_message.from_user
+        if message.reply_to_message and message.reply_to_message.from_user
+        else requester
+    )
+    info = chat_data(chat_id)
+    activity = info.get("activity", {})
+    uid = str(target.id)
+    record = activity.get(uid, {})
+    count = int(record.get("count", 0))
+    total = sum(
+        max(0, int(item.get("count", 0)))
+        for item in activity.values() if isinstance(item, dict)
+    )
+    ordered = sorted(
+        (
+            (str(member_id), max(0, int(item.get("count", 0))))
+            for member_id, item in activity.items()
+            if isinstance(item, dict)
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    rank = next(
+        (index for index, (member_id, _) in enumerate(ordered, 1) if member_id == uid),
+        None,
+    )
+    percentage = (count / total * 100) if total else 0.0
+
+    role = assigned_role(chat_id, target.id)
+    role_label = ROLE_INFO.get(role, ("", ""))[1] if role in ROLE_INFO else ""
+    member = await get_member(chat_id, target.id, context)
+    if not role_label and member:
+        if member.status == "creator":
+            role_label = "مالك المجموعة"
+        elif member.status == "administrator":
+            role_label = "مشرف"
+    if not role_label:
+        role_label = "عضو"
+
+    joined_at = record.get("joined_at")
+    last_seen = record.get("last_seen")
+    joined_text = time.strftime("%Y-%m-%d", time.localtime(joined_at)) if joined_at else "غير متوفر"
+    seen_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(last_seen)) if last_seen else "غير متوفر"
+    username = f"@{target.username}" if target.username else "ما عنده يوزر"
+
+    caption = (
+        "👤 الملف الشخصي\n"
+        "━━━━━━━━━━━━━━\n"
+        f"الاسم: {target.full_name}\n"
+        f"المعرّف: {target.id}\n"
+        f"الحساب: {username}\n"
+        f"الرتبة: {role_label}\n"
+        "━━━━━━━━━━━━━━\n"
+        f"💬 عدد الرسائل: {count:,}\n"
+        f"🏆 الترتيب: {('#' + str(rank)) if rank else 'غير مصنف'} من {len(ordered)}\n"
+        f"📊 نسبة التفاعل: {percentage:.1f}%\n"
+        "━━━━━━━━━━━━━━\n"
+        f"📅 تاريخ الانضمام: {joined_text}\n"
+        f"🕒 آخر ظهور مسجل: {seen_text}\n\n"
+        "PARADOX 404 | NEXUS"
+    )
+
+    try:
+        photos = await context.bot.get_user_profile_photos(target.id, limit=1)
+        if photos.total_count and photos.photos:
+            photo = photos.photos[0][-1]
+            await message.reply_photo(photo.file_id, caption=caption)
+            return
+    except TelegramError:
+        logger.info("Could not fetch profile photo for user %s", target.id)
+    await message.reply_text(caption)
+
+
 async def moderate(update, context):
     message = update.effective_message
     chat = update.effective_chat
@@ -5018,6 +5104,12 @@ async def moderate(update, context):
     track_group_message(message)
     chat_data(chat.id)["title"] = chat.title or str(chat.id)
     await count_activity(chat.id, user)
+
+    # أوامر الملف الشخصي: حرف الألف العربي وحده أو كلمة ايدي فقط.
+    profile_command = normalize_game_text(text).strip()
+    if profile_command in ("ا", "ايدي"):
+        await show_member_profile(message, chat.id, user, context)
+        return
 
     # معالجة طلبات الحذف وموافقة مالك البوت قبل أوامر المجموعة والذكاء الاصطناعي.
     if await handle_nexus_delete_request(message, chat.id, user, context, text):
