@@ -47,7 +47,7 @@ class CommandAndButtonAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(bot.parse_bulk_delete_count("حذف الرسائل"))
         self.assertIsNone(bot.parse_bulk_delete_count("تنظيف المجموعة"))
 
-    def test_back_main_button_returns_to_main_menu(self):
+    async def test_back_main_button_returns_to_main_menu(self):
         user_id = 123456789
         query = FakeCallbackQuery("back_main", user_id)
         update = SimpleNamespace(callback_query=query)
