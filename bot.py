@@ -4067,7 +4067,7 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
     social_triggered = False
 
     # تشغيل/إيقاف المبادرة الاجتماعية بيد مالك المجموعة فقط.
-    social_control = normalize_message(raw_text)
+    social_control = normalize_game_text(raw_text)
     if social_control in ("تفعيل التفاعل الاجتماعي", "تشغيل التفاعل الاجتماعي"):
         if not await is_group_owner(chat_id, user.id, context):
             await message.reply_text("⛔ تفعيل التفاعل الاجتماعي من صلاحية مالك المجموعة فقط.")
