@@ -4310,7 +4310,7 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
                         if social_triggered else ""
                     ),
                 )
-            }]
+            }
         },
         "contents": contents,
         "generationConfig": {
