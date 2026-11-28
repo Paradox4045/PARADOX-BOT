@@ -4292,7 +4292,7 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
         })
 
     payload = {
-        "system_instruction": {
+        "systemInstruction": {
             "parts": [{
                 "text": (
                     "أنت نيكسوس (NEXUS)، شخصية مستقلة واسمك نيكسوس، وPARADOX 404 اسم المشروع فقط. "
