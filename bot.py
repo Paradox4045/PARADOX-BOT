@@ -2125,38 +2125,26 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "commands_help":
         await query.answer()
         await query.edit_message_text(
-            "📋 مركز الأوامر — PARADOX 404\n\n"
-            "قسمنا الاستخدام إلى مكانين حتى تبقى الأوامر واضحة:\n\n"
-            "💬 أوامر تنفذ مباشرة داخل المجموعة، مثل الحماية والإدارة ونيكسوس والألعاب.\n\n"
-            "🤖 أدوات وإعدادات تفتح من الخاص عبر لوحة /start، مثل إدارة الرتب والنسخ الاحتياطي والإحصائيات وإعدادات المالك.\n\n"
-            "اختار القسم:",
+            "📋 الأوامر الإضافية — PARADOX 404\n\n"
+            "هنا تظهر فقط الأوامر التي ما إلها قسم مستقل في لوحة /start.\n"
+            "الأقسام الموجودة باللوحة الرئيسية مثل الحماية والرتب والإحصائيات "
+            "والألعاب والذكاء الاصطناعي والنسخ الاحتياطي ما نكررها هنا.\n\n"
+            "اختار القسم الإضافي:",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 أوامر المجموعة", callback_data="group_commands_help")],
-                [InlineKeyboardButton("🤖 أوامر وأدوات الخاص", callback_data="private_commands_help")],
-                [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="home")],
+                [InlineKeyboardButton("👋 الترحيب والتنظيم", callback_data="group_help_welcome")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
             ]),
         )
 
     elif action == "group_commands_help":
         await query.answer()
         await query.edit_message_text(
-            "💬 أوامر المجموعة — PARADOX 404\\n\\n"
-            "اختار القسم حتى تشوف أوامره بشكل مرتب:\\n\\n"
-            "👮 إدارة الأعضاء والعقوبات\\n"
-            "🛡️ الحماية والقفل\\n"
-            "👋 الترحيب والتنظيم\\n"
-            "📋 المعلومات والسجلات\\n"
-            "🧠 نيكسوس والذاكرة\\n"
-            "🎮 الألعاب والترفيه",
+            "📋 الأوامر الإضافية — PARADOX 404\n\n"
+            "هذه القائمة مخصصة للأوامر التي لا تملك قسماً مستقلاً في لوحة /start.\n"
+            "اختار القسم:",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👮 إدارة الأعضاء والعقوبات", callback_data="group_help_admin")],
-                [InlineKeyboardButton("🛡️ الحماية والقفل", callback_data="group_help_security")],
                 [InlineKeyboardButton("👋 الترحيب والتنظيم", callback_data="group_help_welcome")],
-                [InlineKeyboardButton("📋 المعلومات والسجلات", callback_data="group_help_info")],
-                [InlineKeyboardButton("🧠 نيكسوس والذاكرة", callback_data="group_help_nexus")],
-                [InlineKeyboardButton("🎮 الألعاب والترفيه", callback_data="group_help_fun")],
-                [InlineKeyboardButton("⬅️ أقسام الأوامر", callback_data="commands_help")],
-                [InlineKeyboardButton("🏠 الرئيسية", callback_data="home")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
             ]),
         )
 
@@ -2165,83 +2153,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "group_help_info", "group_help_nexus", "group_help_fun"
     ):
         await query.answer()
-        group_help_pages = {
-            "group_help_admin": (
-                "👮 إدارة الأعضاء والعقوبات",
-                "كتم / كتم مؤقت 30m / فك الكتم\\n"
-                "حظر / حظر مؤقت 2h / فك الحظر / طرد\\n"
-                "تحذير أو إنذار / إزالة إنذار / مسح الإنذارات\\n"
-                "حذف / حذف 20 / تنظيف\\n"
-                "تثبيت / إلغاء التثبيت\\n"
-                "معلومات العضو / رفع مشرف / تنزيل مشرف"
-            ),
-            "group_help_security": (
-                "🛡️ الحماية والقفل",
-                "قفل أو فتح الروابط والصور والفيديو والملفات\\n"
-                "قفل أو فتح الملصقات والصوتيات والتوجيه والسبام\\n"
-                "استثناء الحماية / إلغاء استثناء الحماية"
-            ),
-            "group_help_welcome": (
-                "👋 الترحيب والتنظيم",
-                "تفعيل الترحيب / إيقاف الترحيب\\n"
-                "قوانين / تنبيه / الإبلاغ\\n"
-                "تتوفر بعض إجراءات التنظيم حسب إعدادات المجموعة وصلاحيتك."
-            ),
-            "group_help_info": (
-                "📋 المعلومات والسجلات",
-                "المشرفين / المالك / المتفاعلين\\n"
-                "المكتومين / المحظورين / المقيدين\\n"
-                "الإنذارات / مراقبة\\n"
-                "سجل الإدارة / سجل المخالفات / مساعدة"
-            ),
-            "group_help_nexus": (
-                "🧠 نيكسوس والذاكرة",
-                "يا نيكسوس سؤالك\\n"
-                "تفعيل الذكاء / تعطيل الذكاء\\n"
-                "تفعيل التفاعل الاجتماعي / ايقاف التفاعل الاجتماعي\\n"
-                "تذكر أني ...\\n"
-                "نيكسوس شنو تتذكر عني؟\\n"
-                "نيكسوس امسح ذاكرتي"
-            ),
-            "group_help_fun": (
-                "🎮 الألعاب والترفيه",
-                "يوت ثم اسم الأغنية\\n"
-                "الألعاب / كت / حزورة / لغز\\n"
-                "رياضيات / فكك\\n"
-                "/addsong و /delsong لإدارة مكتبة الأغاني"
-            ),
-        }
-        page_title, page_body = group_help_pages[action]
-        await query.edit_message_text(
-            f"{page_title}\\n\\n{page_body}\\n\\n"
-            "📌 بعض الأوامر تحتاج الرد على رسالة العضو، "
-            "والأوامر الإدارية تخضع لرتبتك وصلاحيات المجموعة.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ كل أقسام أوامر المجموعة", callback_data="group_commands_help")],
-                [InlineKeyboardButton("📋 مركز الأوامر", callback_data="commands_help")],
-                [InlineKeyboardButton("🏠 الرئيسية", callback_data="home")],
-            ]),
-        )
+        if action == "group_help_welcome":
+            page_title = "👋 الترحيب والتنظيم"
+            page_body = (
+                "تفعيل الترحيب / إيقاف الترحيب\n"
+                "قوانين / تنبيه / الإبلاغ\n"
+                "تتوفر إجراءات التنظيم حسب إعدادات المجموعة وصلاحيتك."
+            )
+            await query.edit_message_text(
+                f"{page_title}\n\n{page_body}\n\n"
+                "📌 الأوامر الإدارية تخضع لرتبتك وصلاحيات المجموعة.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ الأوامر الإضافية", callback_data="commands_help")],
+                    [InlineKeyboardButton("🏠 الرئيسية", callback_data="home")],
+                ]),
+            )
+        else:
+            await query.edit_message_text(
+                "هذا القسم صار موجوداً بمكانه المستقل في القائمة الرئيسية، "
+                "لذلك أزلنا تكراره من قائمة الأوامر.\n\n"
+                "افتح القسم المطلوب من /start حتى توصل لميزاته.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 الأوامر الإضافية", callback_data="commands_help")],
+                    [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
+                ]),
+            )
 
     elif action == "private_commands_help":
         await query.answer()
         await query.edit_message_text(
-            "🤖 أدوات الخاص — PARADOX 404\n\n"
-            "افتح محادثة البوت واضغط /start حتى تظهر لوحة التحكم.\n\n"
-            "👑 إدارة المجموعات (مالك البوت الأساسي):\n"
-            "عرض المجموعات التي انضم إليها البوت وتحديث حالتها وتفاصيلها.\n"
-            "إدارة إعداد الاشتراك الإجباري بالقناة.\n"
-            "تصدير البيانات: أرسل «تصدير البيانات» بالخاص.\n"
-            "الاشتراك: تفعيل الاشتراك @قناتك / تعطيل الاشتراك / حالة الاشتراك.\n\n"
-            "🛡️ إدارة مجموعاتك من اللوحة الخاصة:\n"
-            "إدارة الرتب وصلاحياتها والأعضاء، والحماية، والإحصائيات وسجل الإدارة.\n"
-            "النسخ الاحتياطي: إنشاء نسخة، استعادة نسخة، حذف نسخة، وتشغيل النسخ التلقائي.\n"
-            "إعدادات نيكسوس: عرض شرح الذاكرة والتفاعل الاجتماعي والتحكم بالتواصل.\n\n"
-            "هذه اللوحة تعرض فقط المجموعات والأقسام التي تملك صلاحية الوصول إليها. "
-            "قسم «المجموعات» العام يبقى لمالك البوت الأساسي وحده.",
+            "🤖 أدوات لوحة /start\n\n"
+            "كل ميزة إلها قسمها المستقل بالقائمة الرئيسية.\n"
+            "حتى ما يصير تكرار، ما نعيد عرض الحماية أو الرتب أو الإحصائيات "
+            "أو الألعاب أو الذكاء الاصطناعي أو النسخ الاحتياطي هنا.\n\n"
+            "ارجع للقائمة الرئيسية واختار القسم المطلوب.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ أقسام الأوامر", callback_data="commands_help")],
-                [InlineKeyboardButton("🏠 الرئيسية", callback_data="home")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
             ]),
         )
 
