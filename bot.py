@@ -167,7 +167,6 @@ LOCK_TYPES = {
     "polls": "الاستطلاعات",
     "spam": "الإغراق والتكرار",
     "mentions": "المنشنات الجماعية",
-    "bots": "مراقبة دخول البوتات",
 }
 
 DEFAULT_DATA = {
@@ -1851,13 +1850,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await has_permission(chat_id, user.id, "protection", context):
             await query.answer("ما عندك صلاحية تعديل الحماية.", show_alert=True)
             return
-        if lock_name not in LOCK_TYPES:
-            await query.answer("نوع حماية غير معروف.", show_alert=True)
-            return
-        info = chat_data(chat_id)
-        info["locks"][lock_name] = not bool(info["locks"].get(lock_name, False))
+        if lock_name == "bots":
+            info = chat_data(chat_id)
+            info["bot_join_monitor"] = not bool(info.get("bot_join_monitor", True))
+            label = "مراقبة دخول البوتات"
+        else:
+            if lock_name not in LOCK_TYPES:
+                await query.answer("نوع حماية غير معروف.", show_alert=True)
+                return
+            info = chat_data(chat_id)
+            info["locks"][lock_name] = not bool(info["locks"].get(lock_name, False))
+            label = LOCK_TYPES[lock_name]
         save_data()
-        log_action(chat_id, user, f"تغيير حماية: {LOCK_TYPES[lock_name]}")
+        log_action(chat_id, user, f"تغيير حماية: {label}")
         await query.answer("تم تحديث الحماية.")
         await query.edit_message_text(protection_text(chat_id), reply_markup=protection_keyboard(chat_id))
         return
@@ -2562,7 +2567,15 @@ async def set_lock(message, chat_id, actor, lock_name, enabled, context):
     info = chat_data(chat_id)
     info["locks"][lock_name] = bool(enabled)
     save_data()
-    if lock_name == "spam":
+    if lock_name == "bots":
+        info["bot_join_monitor"] = bool(enabled)
+        reply = (
+            "✅ تم تشغيل مراقبة دخول البوتات."
+            if enabled else
+            "✅ تم إيقاف مراقبة دخول البوتات."
+        )
+        action = "تشغيل مراقبة دخول البوتات" if enabled else "إيقاف مراقبة دخول البوتات"
+    elif lock_name == "spam":
         reply = (
             "✅ تم تشغيل حماية السبام."
             if enabled else
@@ -3842,6 +3855,13 @@ async def handle_group_text_commands(update, context):
             "✅ تم تفعيل الترحيب." if enabled else "✅ تم إيقاف الترحيب."
         )
         log_action(chat.id, user, "تفعيل الترحيب" if enabled else "إيقاف الترحيب")
+        return True
+
+    if key in ("قفل مراقبة دخول البوتات", "قفل bots"):
+        await set_lock(message, chat.id, user, "bots", True, context)
+        return True
+    if key in ("فتح مراقبة دخول البوتات", "فتح bots"):
+        await set_lock(message, chat.id, user, "bots", False, context)
         return True
 
     for lock_name, label in LOCK_TYPES.items():
