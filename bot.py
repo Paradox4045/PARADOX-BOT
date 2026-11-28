@@ -275,6 +275,9 @@ def load_data():
             loaded = json.load(f)
         if not isinstance(loaded, dict):
             raise ValueError("Invalid data")
+        for key in ("chats", "bot_groups", "settings"):
+            if not isinstance(loaded.get(key, {}), dict):
+                raise ValueError(f"Invalid data section: {key}")
         loaded.setdefault("chats", {})
         loaded.setdefault("bot_groups", {})
         loaded.setdefault("settings", {})
@@ -285,24 +288,52 @@ def load_data():
     except FileNotFoundError:
         return json.loads(json.dumps(DEFAULT_DATA))
     except (json.JSONDecodeError, ValueError):
-        logger.exception("Data file damaged")
+        if DATA_FILE.exists():
+            recovery_path = DATA_FILE.with_name(
+                f"{DATA_FILE.name}.corrupt-{time.time_ns()}.bak"
+            )
+            try:
+                shutil.copy2(DATA_FILE, recovery_path)
+            except OSError as backup_error:
+                logger.exception("Could not preserve damaged data file")
+                raise RuntimeError(
+                    "بيانات PARADOX تالفة وتعذر إنشاء نسخة آمنة منها؛ أوقفت التشغيل لمنع فقدانها."
+                ) from backup_error
+            logger.error(
+                "Data file damaged; original contents preserved at %s",
+                recovery_path,
+            )
+        else:
+            logger.exception("Data file damaged but no source file exists")
         return json.loads(json.dumps(DEFAULT_DATA))
 
 
 data = load_data()
 
+
+def rebuild_message_history():
+    """يعيد بناء سجل الرسائل المؤقت من بيانات كل مجموعة بعد الاستعادة أو الاستيراد."""
+    group_message_history.clear()
+    for raw_chat_id, info in data.get("chats", {}).items():
+        try:
+            chat_id = int(raw_chat_id)
+        except (TypeError, ValueError):
+            logger.warning("Skipping invalid chat id in message history: %r", raw_chat_id)
+            continue
+        history = info.get("message_history", []) if isinstance(info, dict) else []
+        if isinstance(history, list):
+            group_message_history[chat_id] = deque(
+                (
+                    item for item in history[-DELETE_TRACK_LIMIT:]
+                    if isinstance(item, dict)
+                    and "id" in item and "date" in item
+                ),
+                maxlen=DELETE_TRACK_LIMIT,
+            )
+
+
 # استعادة سجل الرسائل من التخزين الدائم حتى يستمر أمر التنظيف بعد إعادة التشغيل.
-for _chat_id, _info in data.get("chats", {}).items():
-    _history = _info.get("message_history", [])
-    if isinstance(_history, list):
-        group_message_history[int(_chat_id)] = deque(
-            (
-                item for item in _history[-DELETE_TRACK_LIMIT:]
-                if isinstance(item, dict)
-                and "id" in item and "date" in item
-            ),
-            maxlen=DELETE_TRACK_LIMIT,
-        )
+rebuild_message_history()
 
 
 def save_data():
@@ -370,6 +401,7 @@ def restore_group_backup(chat_id, backup_path):
         raise ValueError("Backup does not belong to this group")
     data.setdefault("chats", {})[str(int(chat_id))] = payload["group"]
     chat_data(chat_id)
+    rebuild_message_history()
     save_data()
 
 
@@ -2173,14 +2205,25 @@ async def import_data_backup(update, context):
             raise ValueError("Invalid backup structure")
         candidate["settings"].setdefault("force_channel", None)
         candidate["settings"].setdefault("force_channel_url", None)
-        temp_path = DATA_FILE.with_suffix(".import.tmp")
+        candidate["settings"].setdefault("nexus_silenced_users", {})
+        candidate.setdefault("bot_groups", {})
         DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # احتفظ بالملف الحالي قبل استبداله، وأوقف الاستيراد إذا تعذر إنشاء النسخة.
+        if DATA_FILE.exists():
+            import_backup = DATA_FILE.with_name(
+                f"{DATA_FILE.name}.pre-import-{time.time_ns()}.bak"
+            )
+            shutil.copy2(DATA_FILE, import_backup)
+
+        temp_path = DATA_FILE.with_suffix(".import.tmp")
         with temp_path.open("w", encoding="utf-8") as output:
             json.dump(candidate, output, ensure_ascii=False, indent=2)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temp_path, DATA_FILE)
         data = candidate
+        rebuild_message_history()
         await message.reply_text(
             "✅ تم استيراد النسخة الاحتياطية بنجاح وحفظ بيانات المجموعات."
         )
@@ -2888,6 +2931,18 @@ def download_permitted_youtube_mp3(query, output_dir):
 
 
 
+def cleanup_audio_workdir(task, work_dir):
+    """لا تحذف مجلد التنزيل قبل انتهاء خيط yt-dlp حتى بعد انتهاء مهلة الانتظار."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.debug("Timed-out audio worker finished with an error", exc_info=True)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 async def search_song(message, chat_id, query):
     query = (query or "").strip()
     if not query:
@@ -2898,9 +2953,14 @@ async def search_song(message, chat_id, query):
         f"🔎 نيكسوس يبحث بالأكثر من مصدر: {query}"
     )
     work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
+    worker_task = None
+    cleanup_deferred = False
     try:
+        worker_task = asyncio.create_task(
+            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir)
+        )
         result = await asyncio.wait_for(
-            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir),
+            asyncio.shield(worker_task),
             timeout=180,
         )
         if not result:
@@ -2926,16 +2986,29 @@ async def search_song(message, chat_id, query):
         await status_message.delete()
 
     except asyncio.TimeoutError:
+        if worker_task is not None and not worker_task.done():
+            worker_task.add_done_callback(
+                lambda completed: cleanup_audio_workdir(completed, work_dir)
+            )
+            cleanup_deferred = True
         await status_message.edit_text(
             "⏳ التحميل أخذ وقت أطول من اللازم. جرّب مرة ثانية."
         )
+    except asyncio.CancelledError:
+        if worker_task is not None and not worker_task.done():
+            worker_task.add_done_callback(
+                lambda completed: cleanup_audio_workdir(completed, work_dir)
+            )
+            cleanup_deferred = True
+        raise
     except Exception:
         logger.exception("Permitted YouTube audio download failed")
         await status_message.edit_text(
             "⚠️ تعذر تجهيز ملف MP3 حالياً. حاول مرة ثانية بعد قليل."
         )
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if not cleanup_deferred:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # =========================================================
@@ -3291,7 +3364,11 @@ async def scheduled_group_worker(application):
 
 
 async def start_background_tasks(application):
-    asyncio.create_task(scheduled_group_worker(application))
+    # اربط المهمة بعمر Application حتى تُدار وتُغلق بصورة سليمة عند إيقاف البوت.
+    application.create_task(
+        scheduled_group_worker(application),
+        name="paradox-scheduled-group-worker",
+    )
 
 
 # =========================================================
@@ -3966,17 +4043,43 @@ async def nexus_ai_reply(message, chat_id, user, text):
     }
 
     def call_gemini():
-        response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-            headers={
-                "x-goog-api-key": api_key,
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json()
+        retryable_statuses = {429, 500, 502, 503, 504}
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+                    headers={
+                        "x-goog-api-key": api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=(5, 30),
+                )
+                if response.status_code in retryable_statuses and attempt < 2:
+                    retry_after = response.headers.get("Retry-After", "")
+                    try:
+                        delay = min(max(float(retry_after), 1.0), 8.0)
+                    except (TypeError, ValueError):
+                        delay = 1.5 * (2 ** attempt)
+                    logger.warning(
+                        "Gemini temporary HTTP %s; retry %s/2 after %.1fs",
+                        response.status_code, attempt + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as error:
+                status = getattr(getattr(error, "response", None), "status_code", None)
+                if status not in retryable_statuses or attempt >= 2:
+                    raise
+                delay = 1.5 * (2 ** attempt)
+                logger.warning(
+                    "Gemini temporary request failure; retry %s/2 after %.1fs",
+                    attempt + 1, delay,
+                )
+                time.sleep(delay)
+        raise RuntimeError("Gemini request retries exhausted")
 
     try:
         result = await asyncio.to_thread(call_gemini)
@@ -4828,6 +4931,43 @@ async def revoke_unmute(update, context):
 # STARTUP
 # =========================================================
 
+async def error_handler(update, context):
+    """يسجل الاستثناءات غير المعالجة دون كشف بيانات حساسة للمستخدمين."""
+    error = getattr(context, "error", None)
+    if error is None:
+        logger.error("Unhandled Telegram update error (no exception details supplied)")
+        return
+    logger.error(
+        "Unhandled Telegram update error",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+
+
+def log_data_storage_location():
+    """تحقق تشخيصي فقط: لا ينقل ملف البيانات ولا يغيّر مساره تلقائياً."""
+    data_path = DATA_FILE.expanduser().resolve()
+    volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if not volume_path:
+        logger.warning(
+            "RAILWAY_VOLUME_MOUNT_PATH is not set; verify DATA_FILE uses persistent storage."
+        )
+        logger.info("PARADOX data file resolves to: %s", data_path)
+        return
+
+    volume_root = Path(volume_path).expanduser().resolve()
+    try:
+        data_path.relative_to(volume_root)
+    except ValueError:
+        logger.warning(
+            "DATA_FILE is outside the Railway volume. Current path: %s | volume: %s. "
+            "No automatic migration was performed to protect existing data.",
+            data_path,
+            volume_root,
+        )
+    else:
+        logger.info("Persistent PARADOX data file is inside Railway volume: %s", data_path)
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -4839,6 +4979,7 @@ def main():
             "وهو رقم حساب مالك البوت الأساسي."
         )
 
+    log_data_storage_location()
     app = Application.builder().token(BOT_TOKEN).post_init(start_background_tasks).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -4888,6 +5029,8 @@ def main():
         ),
         moderate,
     ))
+
+    app.add_error_handler(error_handler)
 
     logger.info("PARADOX 404 is starting...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
