@@ -2125,13 +2125,71 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "commands_help":
         await query.answer()
         await query.edit_message_text(
-            "📋 الأوامر الإضافية — PARADOX 404\n\n"
-            "هنا تظهر فقط الأوامر التي ما إلها قسم مستقل في لوحة /start.\n"
-            "الأقسام الموجودة باللوحة الرئيسية مثل الحماية والرتب والإحصائيات "
-            "والألعاب والذكاء الاصطناعي والنسخ الاحتياطي ما نكررها هنا.\n\n"
-            "اختار القسم الإضافي:",
+            "📋 الأوامر النصية — PARADOX 404\n\n"
+            "أقسام الأوامر التي تكتبها مباشرة داخل المجموعة، بدون استخدام أزرار التنفيذ.\n"
+            "اختار القسم حتى تشوف أوامره وطريقة استخدامها:\n\n"
+            "📌 عرض الأوامر هنا للتنظيم والتعريف؛ تفعيل تنفيذ كل أمر يحتاج ربطه "
+            "بمعالج الأوامر النصية مع التحقق من الصلاحيات.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👋 الترحيب والتنظيم", callback_data="group_help_welcome")],
+                [InlineKeyboardButton("🛡️ أوامر الإشراف", callback_data="voice_commands_admin")],
+                [InlineKeyboardButton("👥 أوامر الأعضاء", callback_data="voice_commands_members")],
+                [InlineKeyboardButton("💬 أوامر الرسائل", callback_data="voice_commands_messages")],
+                [InlineKeyboardButton("⚙️ أوامر المجموعة", callback_data="voice_commands_group")],
+                [InlineKeyboardButton("🧠 أوامر نيكسوس", callback_data="voice_commands_nexus")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
+            ]),
+        )
+
+    elif action in (
+        "voice_commands_admin", "voice_commands_members",
+        "voice_commands_messages", "voice_commands_group",
+        "voice_commands_nexus"
+    ):
+        await query.answer()
+        pages = {
+            "voice_commands_admin": (
+                "🛡️ أوامر الإشراف",
+                "كتم — إلغاء كتم\n"
+                "حظر — إلغاء حظر\n"
+                "طرد\n"
+                "تقييد — إلغاء تقييد\n"
+                "تحذير — إزالة تحذير"
+            ),
+            "voice_commands_members": (
+                "👥 أوامر الأعضاء",
+                "ترقية — تنزيل رتبة\n"
+                "معلومات العضو — الرتبة\n"
+                "الإنذارات — مسح الإنذارات"
+            ),
+            "voice_commands_messages": (
+                "💬 أوامر الرسائل",
+                "حذف — مسح\n"
+                "تثبيت — إلغاء تثبيت\n"
+                "فتح — قفل\n"
+                "تنظيف"
+            ),
+            "voice_commands_group": (
+                "⚙️ أوامر المجموعة",
+                "تفعيل الترحيب — تعطيل الترحيب\n"
+                "تفعيل الحماية — تعطيل الحماية\n"
+                "رابط المجموعة — معلومات المجموعة"
+            ),
+            "voice_commands_nexus": (
+                "🧠 أوامر نيكسوس",
+                "نيكسوس\n"
+                "اسكت — تكلم\n"
+                "امسح الذاكرة\n"
+                "ملخص المجموعة"
+            ),
+        }
+        page_title, page_body = pages[action]
+        await query.edit_message_text(
+            f"{page_title}\n\n{page_body}\n\n"
+            "📌 هذه صفحة تنظيم للأوامر المقترحة. تنفيذها من رسائل المجموعة "
+            "سيُفعّل بعد ربط كل أمر بوظيفته والتحقق من رتبة المستخدم.\n"
+            "لتحديد عضو: يكون الأمر رداً على رسالته أو مع @username.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ رجوع إلى الأوامر", callback_data="commands_help")],
                 [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="home")],
             ]),
         )
