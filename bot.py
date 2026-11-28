@@ -3046,8 +3046,8 @@ async def search_song(message, chat_id, query):
                     "",
                 ]
                 for index, item in enumerate(matches[:5], 1):
-                    lines.append(f"{index}. {item['title']}\\n{item['url']}")
-                await status_message.edit_text("\\n".join(lines), disable_web_page_preview=True)
+                    lines.append(f"{index}. {item['title']}\n{item['url']}")
+                await status_message.edit_text("\n".join(lines), disable_web_page_preview=True)
             else:
                 await status_message.edit_text(
                     "⚠️ يوتيوب حالياً مانع الخادم من جلب النتائج، لذلك ما گدرت أجهّز الصوت أو أعرض روابط. جرّب بعد فترة."
