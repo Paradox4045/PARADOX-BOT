@@ -1179,7 +1179,7 @@ async def handle_role_assignment_command(message, chat_id, actor, context, comma
         actor_role = "owner" if await is_group_owner(chat_id, actor.id, context) else assigned_role(chat_id, actor.id)
         actor_level = ROLE_ORDER.index(actor_role) if actor_role in ROLE_ORDER else 99
         target_level = ROLE_ORDER.index(role)
-        if actor_role != "owner" and actor_level >= target_level:
+        if actor_level >= target_level:
             await message.reply_text("⛔ ما تگدر تسحب رتبة مساوية أو أعلى من رتبتك.")
             return True
         info["roles"].pop(str(target.id), None)
