@@ -41,7 +41,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "").strip()
-DATA_FILE = Path(os.getenv("DATA_FILE", "paradox_data.json"))
+# Railway's persistent volume is mounted at /data. Keep bot state there by default.
+# Local development falls back to the project directory when /data is unavailable.
+DEFAULT_DATA_PATH = "/data/paradox_data.json" if Path("/data").is_dir() else "paradox_data.json"
+DATA_FILE = Path(os.getenv("DATA_FILE", DEFAULT_DATA_PATH))
+LEGACY_DATA_FILE = Path("paradox_data.json")
 
 WARN_LIMIT = 4
 SPAM_WINDOW_SECONDS = 6
@@ -270,6 +274,21 @@ def is_duplicate_message(chat_id, user_id, text):
 # =========================================================
 
 def load_data():
+    # One-time migration from the old container-local path into Railway's
+    # persistent volume. This also supports an explicitly configured DATA_FILE.
+    if (
+        not DATA_FILE.exists()
+        and DATA_FILE.resolve() != LEGACY_DATA_FILE.resolve()
+        and LEGACY_DATA_FILE.is_file()
+    ):
+        try:
+            DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(LEGACY_DATA_FILE, DATA_FILE)
+            logger.info("Migrated legacy bot data into %s", DATA_FILE)
+        except OSError:
+            logger.exception("Could not migrate legacy bot data into persistent storage")
+            raise
+
     try:
         with DATA_FILE.open("r", encoding="utf-8") as f:
             loaded = json.load(f)
