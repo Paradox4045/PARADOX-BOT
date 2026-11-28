@@ -2668,318 +2668,121 @@ async def show_logs(message, chat_id, actor, context):
 
 
 # =========================================================
-# DIRECT YOUTUBE SEARCH
+# YOUTUBE DATA API SEARCH + PERMITTED AUDIO
 # =========================================================
 
 def youtube_search(query):
-    """Search YouTube for candidate videos; no audio is downloaded here."""
-    from yt_dlp import YoutubeDL
+    """Search real YouTube video results through the official YouTube Data API."""
+    api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("YOUTUBE_API_KEY_MISSING")
 
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extract_flat": "in_playlist",
-        "noplaylist": True,
-        "socket_timeout": 15,
-    }
-    with YoutubeDL(options) as ydl:
-        result = ydl.extract_info(f"ytsearch5:{query}", download=False)
+    response = requests.get(
+        "https://www.googleapis.com/youtube/v3/search",
+        params={
+            "part": "snippet",
+            "type": "video",
+            "maxResults": 5,
+            "q": query,
+            "key": api_key,
+        },
+        timeout=20,
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        response.raise_for_status()
+        raise RuntimeError("YOUTUBE_API_INVALID_RESPONSE")
+
+    if response.status_code != 200:
+        error = (payload.get("error") or {})
+        reason = ""
+        errors = error.get("errors") or []
+        if errors:
+            reason = str(errors[0].get("reason") or "")
+        message = str(error.get("message") or "")
+        logger.warning("YouTube Data API search failed (%s): %s", reason, message[:300])
+        if reason in ("quotaExceeded", "dailyLimitExceeded"):
+            raise RuntimeError("YOUTUBE_API_QUOTA_EXCEEDED")
+        if reason in ("keyInvalid", "accessNotConfigured", "forbidden"):
+            raise RuntimeError("YOUTUBE_API_KEY_INVALID_OR_DISABLED")
+        raise RuntimeError("YOUTUBE_API_REQUEST_FAILED")
 
     matches = []
-    for item in (result or {}).get("entries") or []:
-        if not item:
-            continue
-        video_id = item.get("id")
-        title = (item.get("title") or "").strip()
+    for item in payload.get("items") or []:
+        video_id = ((item.get("id") or {}).get("videoId") or "").strip()
+        snippet = item.get("snippet") or {}
+        title = (snippet.get("title") or "").strip()
         if video_id and title:
             matches.append({
                 "title": title[:90],
                 "url": f"https://www.youtube.com/watch?v={video_id}",
             })
-        if len(matches) >= 5:
-            break
     return matches
 
 
-def download_archive_audio(query, output_dir):
+def download_youtube_cc_mp3(video_url, output_dir):
     """
-    Search Internet Archive for audio explicitly published under reusable
-    Creative Commons / public-domain terms, then download an audio file.
-    """
-    from urllib.parse import quote
-
-    headers = {"User-Agent": "PARADOX-404-NEXUS/1.0 (audio search)"}
-    clean_query = re.sub(r"[^\w\s'-]", " ", query, flags=re.UNICODE)
-    clean_query = re.sub(r"\s+", " ", clean_query).strip()
-    if not clean_query:
-        return None
-
-    search_url = "https://archive.org/advancedsearch.php"
-    search_params = {
-        "q": f'mediatype:audio AND title:("{clean_query}")',
-        "fl[]": ["identifier", "title", "creator", "licenseurl"],
-        "rows": 15,
-        "page": 1,
-        "output": "json",
-    }
-    response = requests.get(
-        search_url, params=search_params, headers=headers, timeout=20
-    )
-    response.raise_for_status()
-    docs = response.json().get("response", {}).get("docs", [])
-
-    for item in docs:
-        identifier = item.get("identifier")
-        license_url = str(item.get("licenseurl") or "").lower()
-        reusable = (
-            "creativecommons.org/licenses/by/" in license_url
-            or "creativecommons.org/licenses/by-sa/" in license_url
-            or "creativecommons.org/publicdomain/" in license_url
-            or "creativecommons.org/zero/" in license_url
-        )
-        if not identifier or not reusable:
-            continue
-
-        metadata_response = requests.get(
-            f"https://archive.org/metadata/{quote(identifier, safe='')}",
-            headers=headers,
-            timeout=20,
-        )
-        metadata_response.raise_for_status()
-        metadata = metadata_response.json()
-        files = metadata.get("files") or []
-
-        audio_files = []
-        for file_info in files:
-            name = str(file_info.get("name") or "")
-            lower_name = name.lower()
-            if not lower_name.endswith((".mp3", ".ogg", ".oga", ".wav", ".flac", ".m4a")):
-                continue
-            if file_info.get("private") == "true":
-                continue
-            try:
-                size = int(file_info.get("size") or 0)
-            except (TypeError, ValueError):
-                size = 0
-            if size and size > 49 * 1024 * 1024:
-                continue
-            audio_files.append((name, size))
-
-        if not audio_files:
-            continue
-
-        # Prefer MP3 for Telegram compatibility, then OGG/M4A/WAV/FLAC.
-        priority = {".mp3": 0, ".ogg": 1, ".oga": 1, ".m4a": 2,
-                    ".wav": 3, ".flac": 4}
-        audio_files.sort(
-            key=lambda pair: priority.get(Path(pair[0]).suffix.lower(), 9)
-        )
-
-        for filename, expected_size in audio_files:
-            target = Path(output_dir) / ("archive_audio" + Path(filename).suffix.lower())
-            download_url = (
-                "https://archive.org/download/"
-                + quote(identifier, safe="")
-                + "/"
-                + quote(filename, safe="/")
-            )
-            with requests.get(
-                download_url, headers=headers, timeout=(20, 90), stream=True
-            ) as audio_response:
-                if audio_response.status_code != 200:
-                    continue
-                content_type = audio_response.headers.get("Content-Type", "").lower()
-                if "text/html" in content_type:
-                    continue
-                total = 0
-                with target.open("wb") as output:
-                    for chunk in audio_response.iter_content(chunk_size=256 * 1024):
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > 49 * 1024 * 1024:
-                            output.close()
-                            target.unlink(missing_ok=True)
-                            break
-                        output.write(chunk)
-                if target.is_file() and target.stat().st_size > 0:
-                    return {
-                        "path": str(target),
-                        "title": str(item.get("title") or query)[:64],
-                        "uploader": str(item.get("creator") or "Internet Archive")[:64],
-                        "license": item.get("licenseurl") or "Creative Commons",
-                    }
-
-    return None
-
-
-def download_youtube_cc_mp3(query, output_dir):
-    """
-    Download only videos explicitly marked with a Creative Commons license.
-    Convert the permitted audio to MP3 using the bundled imageio-ffmpeg binary.
+    Download only a YouTube video whose metadata explicitly identifies
+    a Creative Commons license. The video URL comes from official API search.
     """
     from yt_dlp import YoutubeDL
     import imageio_ffmpeg
 
-    search_options = {
+    inspect_options = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "extract_flat": "in_playlist",
         "noplaylist": True,
-        "socket_timeout": 8,
+        "socket_timeout": 20,
     }
-    with YoutubeDL(search_options) as ydl:
-        search = ydl.extract_info(f"ytsearch2:{query}", download=False)
+    with YoutubeDL(inspect_options) as ydl:
+        info = ydl.extract_info(video_url, download=False)
 
-    candidates = (search or {}).get("entries") or []
-    for candidate in candidates:
-        if not candidate or not candidate.get("id"):
-            continue
-        video_url = f"https://www.youtube.com/watch?v={candidate['id']}"
-
-        inspect_options = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "socket_timeout": 20,
-        }
-        with YoutubeDL(inspect_options) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-
-        license_name = (info.get("license") or "").lower()
-        if "creative commons" not in license_name and "creativecommons.org" not in license_name:
-            continue
-
-        download_options = {
-            "quiet": True,
-            "no_warnings": True,
-            "format": "bestaudio/best",
-            "noplaylist": True,
-            "socket_timeout": 30,
-            "outtmpl": str(Path(output_dir) / "nexus_audio.%(ext)s"),
-            "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
-        }
-        with YoutubeDL(download_options) as ydl:
-            ydl.download([video_url])
-
-        mp3_path = Path(output_dir) / "nexus_audio.mp3"
-        if mp3_path.is_file() and mp3_path.stat().st_size > 0:
-            return {
-                "path": str(mp3_path),
-                "title": (info.get("title") or candidate.get("title") or "NEXUS Audio")[:64],
-                "uploader": (info.get("uploader") or "")[:64],
-                "license": info.get("license") or "Creative Commons",
-            }
-
-    return None
-
-
-def download_wikimedia_audio(query, output_dir):
-    """Search Wikimedia Commons and download only openly licensed audio."""
-    api = "https://commons.wikimedia.org/w/api.php"
-    headers = {"User-Agent": "PARADOX-404-NEXUS/1.0 (audio search)"}
-    response = requests.get(api, params={
-        "action": "query",
-        "generator": "search",
-        "gsrsearch": f'filetype:audio "{query}"',
-        "gsrnamespace": 6,
-        "gsrlimit": 10,
-        "prop": "imageinfo",
-        "iiprop": "url|extmetadata",
-        "iiurlwidth": 0,
-        "format": "json",
-    }, headers=headers, timeout=20)
-    response.raise_for_status()
-    pages = (response.json().get("query") or {}).get("pages") or {}
-    for page in pages.values():
-        info = (page.get("imageinfo") or [{}])[0]
-        meta = info.get("extmetadata") or {}
-        license_name = str((meta.get("LicenseShortName") or {}).get("value") or "").strip()
-        license_url = str((meta.get("LicenseUrl") or {}).get("value") or "").strip()
-        license_lower = (license_name + " " + license_url).lower()
-        permitted = any(token in license_lower for token in (
-            "cc by", "cc-by", "cc0", "public domain", "public-domain",
-            "creativecommons.org/licenses/by", "creativecommons.org/publicdomain",
-        ))
-        if not permitted:
-            continue
-        file_url = info.get("url")
-        if not file_url:
-            continue
-        ext = Path(str(page.get("title") or "")).suffix.lower()
-        if ext not in (".mp3", ".ogg", ".oga", ".wav", ".flac", ".m4a"):
-            continue
-        target = Path(output_dir) / ("commons_audio" + ext)
-        with requests.get(file_url, headers=headers, timeout=(20, 90), stream=True) as audio:
-            audio.raise_for_status()
-            content_type = audio.headers.get("Content-Type", "").lower()
-            if "text/html" in content_type:
-                continue
-            total = 0
-            with target.open("wb") as output:
-                for chunk in audio.iter_content(chunk_size=256 * 1024):
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > 49 * 1024 * 1024:
-                        output.close()
-                        target.unlink(missing_ok=True)
-                        break
-                    output.write(chunk)
-            if target.is_file() and target.stat().st_size:
-                return {
-                    "path": str(target),
-                    "title": str(page.get("title") or query).replace("File:", "")[:64],
-                    "uploader": "Wikimedia Commons",
-                    "license": license_name or license_url,
-                }
-    return None
-
-
-def download_permitted_youtube_mp3(query, output_dir):
-    """
-    Try ten YouTube search strategies in sequence. Every attempt searches
-    YouTube through yt-dlp; audio is downloaded only when the video is
-    explicitly marked Creative Commons. No third-party audio repositories
-    are used. A failed search/inspection/download advances to the next route.
-    """
-    clean_query = " ".join((query or "").split())
-    if not clean_query:
+    license_name = (info.get("license") or "").lower()
+    if "creative commons" not in license_name and "creativecommons.org" not in license_name:
         return None
 
-    search_routes = (
-        ("بحث عام", clean_query),
-        ("مطابقة العبارة", f'"{clean_query}"'),
-        ("الصوت الرسمي", f"{clean_query} official audio"),
-        ("الفيديو الرسمي", f"{clean_query} official music video"),
-        ("كلمات الأغنية", f"{clean_query} lyrics"),
-        ("بحث صوتي", f"{clean_query} audio"),
-        ("الأغنية كاملة", f"{clean_query} full song"),
-        ("قناة الفنان", f"{clean_query} topic"),
-        ("بحث الأغنية", f"{clean_query} song"),
-        ("بحث موسيقي", f"{clean_query} music"),
-    )
+    download_options = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "outtmpl": str(Path(output_dir) / "nexus_audio.%(ext)s"),
+        "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+    with YoutubeDL(download_options) as ydl:
+        ydl.download([video_url])
 
-    attempted_queries = set()
-    for route_name, route_query in search_routes:
-        normalized = route_query.casefold()
-        if normalized in attempted_queries:
-            continue
-        attempted_queries.add(normalized)
+    mp3_path = Path(output_dir) / "nexus_audio.mp3"
+    if mp3_path.is_file() and mp3_path.stat().st_size > 0:
+        return {
+            "path": str(mp3_path),
+            "title": (info.get("title") or "NEXUS Audio")[:64],
+            "uploader": (info.get("uploader") or "")[:64],
+            "license": info.get("license") or "Creative Commons",
+            "source": "YouTube",
+        }
+    return None
+
+
+def find_youtube_song(query, output_dir):
+    """
+    Search YouTube once through the official API, then check returned videos
+    for an explicit Creative Commons license before attempting audio download.
+    """
+    matches = youtube_search(query)
+    for item in matches:
         try:
-            result = download_youtube_cc_mp3(route_query, output_dir)
+            result = download_youtube_cc_mp3(item["url"], output_dir)
             if result:
-                result["source"] = "YouTube"
-                result["search_route"] = route_name
-                return result
+                return {"audio": result, "matches": matches}
         except Exception as error:
             error_text = str(error).casefold()
             blocked_markers = (
@@ -2988,17 +2791,10 @@ def download_permitted_youtube_mp3(query, output_dir):
                 "bot detection",
             )
             if any(marker in error_text for marker in blocked_markers):
-                logger.warning(
-                    "YouTube blocked this connection on route '%s'; stopping retries",
-                    route_name,
-                )
+                logger.warning("YouTube blocked audio extraction; stopping audio checks")
                 break
-            logger.exception(
-                "YouTube search route '%s' failed; trying the next route",
-                route_name,
-            )
-    return None
-
+            logger.warning("Could not prepare permitted audio for %s: %s", item["url"], error)
+    return {"audio": None, "matches": matches}
 
 
 def cleanup_audio_workdir(task, work_dir):
@@ -3020,37 +2816,39 @@ async def search_song(message, chat_id, query):
         return
 
     status_message = await message.reply_text(
-        f"🔎 نيكسوس يبحث عبر 10 مسارات من يوتيوب: {query}"
+        f"🔎 نيكسوس يبحث عن الأغنية في يوتيوب: {query}"
     )
     work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
     worker_task = None
     cleanup_deferred = False
     try:
         worker_task = asyncio.create_task(
-            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir)
+            asyncio.to_thread(find_youtube_song, query, work_dir)
         )
-        result = await asyncio.wait_for(
+        search_result = await asyncio.wait_for(
             asyncio.shield(worker_task),
-            timeout=180,
+            timeout=90,
         )
-        if not result:
-            try:
-                matches = await asyncio.to_thread(youtube_search, query)
-            except Exception as search_error:
-                logger.warning("YouTube link search failed: %s", search_error)
-                matches = []
+        result = search_result.get("audio")
+        matches = search_result.get("matches") or []
 
+        if not result:
             if matches:
                 lines = [
-                    "🎵 ما حصلت ملفاً صوتياً مرخّصاً للتنزيل، بس هاي نتائج يوتيوب:",
+                    "🎵 هاي نتائج البحث الحقيقية من يوتيوب:",
+                    "",
+                    "ما حصلت بينها ملفاً صوتياً مرخّصاً للتنزيل، فهذه روابط المشاهدة:",
                     "",
                 ]
                 for index, item in enumerate(matches[:5], 1):
                     lines.append(f"{index}. {item['title']}\n{item['url']}")
-                await status_message.edit_text("\n".join(lines), disable_web_page_preview=True)
+                await status_message.edit_text(
+                    "\n".join(lines),
+                    disable_web_page_preview=True,
+                )
             else:
                 await status_message.edit_text(
-                    "⚠️ يوتيوب حالياً مانع الخادم من جلب النتائج، لذلك ما گدرت أجهّز الصوت أو أعرض روابط. جرّب بعد فترة."
+                    "🔎 ما ظهرت نتائج لهذا الاسم في يوتيوب. جرّب تكتب اسم الأغنية والفنان."
                 )
             return
 
@@ -3066,7 +2864,7 @@ async def search_song(message, chat_id, query):
                 audio=audio_file,
                 title=result["title"],
                 performer=result["uploader"] or "NEXUS",
-                caption=f"🎵 تم إرسال الملف من {result.get('source', 'مصدر مفتوح')} — {result.get('license', 'ترخيص متاح')}",
+                caption=f"🎵 تم إرسال الملف بترخيص {result.get('license', 'Creative Commons')}",
             )
         await status_message.delete()
 
@@ -3077,7 +2875,7 @@ async def search_song(message, chat_id, query):
             )
             cleanup_deferred = True
         await status_message.edit_text(
-            "⏳ التحميل أخذ وقت أطول من اللازم. جرّب مرة ثانية."
+            "⏳ البحث أخذ وقت أطول من اللازم. جرّب مرة ثانية."
         )
     except asyncio.CancelledError:
         if worker_task is not None and not worker_task.done():
@@ -3086,10 +2884,22 @@ async def search_song(message, chat_id, query):
             )
             cleanup_deferred = True
         raise
+    except RuntimeError as error:
+        reason = str(error)
+        messages = {
+            "YOUTUBE_API_KEY_MISSING": "⚙️ البحث يحتاج مفتاح YouTube API. أضف YOUTUBE_API_KEY إلى متغيرات Railway حتى أگدر أبحث.",
+            "YOUTUBE_API_QUOTA_EXCEEDED": "⚠️ خلصت حصة البحث المجانية لليوم من يوتيوب. جرّب باچر.",
+            "YOUTUBE_API_KEY_INVALID_OR_DISABLED": "⚠️ مفتاح YouTube API غير صحيح أو واجهة YouTube Data API مو مفعّلة بمشروع Google.",
+            "YOUTUBE_API_REQUEST_FAILED": "⚠️ تعذر الاتصال ببحث يوتيوب حالياً. جرّب بعد فترة.",
+            "YOUTUBE_API_INVALID_RESPONSE": "⚠️ يوتيوب رجّع استجابة غير مفهومة. جرّب بعد فترة.",
+        }
+        await status_message.edit_text(messages.get(
+            reason, "⚠️ تعذر البحث في يوتيوب حالياً. جرّب بعد فترة."
+        ))
     except Exception:
-        logger.exception("Permitted YouTube audio download failed")
+        logger.exception("YouTube song search failed")
         await status_message.edit_text(
-            "⚠️ تعذر تجهيز ملف MP3 حالياً. حاول مرة ثانية بعد قليل."
+            "⚠️ تعذر إكمال البحث أو تجهيز الصوت حالياً. جرّب مرة ثانية بعد قليل."
         )
     finally:
         if not cleanup_deferred:
