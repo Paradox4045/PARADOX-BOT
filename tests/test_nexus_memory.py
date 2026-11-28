@@ -39,14 +39,24 @@ class NexusMemoryTests(unittest.TestCase):
 
         self.assertEqual(
             bot._nexus_relevant_facts(first_group, 111, "ألعاب كرة القدم"),
-            ["أحب ألعاب كرة القدم"],
-        )
-        self.assertEqual(
-            bot._nexus_relevant_facts(first_group, 222, "ألعاب كرة القدم"),
             [],
         )
         self.assertEqual(
-            bot._nexus_relevant_facts(second_group, 111, "ألعاب كرة القدم"),
+            bot._nexus_relevant_facts(
+                first_group, 111, "ألعاب كرة القدم", include_user=True
+            ),
+            ["أحب ألعاب كرة القدم"],
+        )
+        self.assertEqual(
+            bot._nexus_relevant_facts(
+                first_group, 222, "ألعاب كرة القدم", include_user=True
+            ),
+            [],
+        )
+        self.assertEqual(
+            bot._nexus_relevant_facts(
+                second_group, 111, "ألعاب كرة القدم", include_user=True
+            ),
             [],
         )
 
