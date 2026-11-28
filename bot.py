@@ -2205,20 +2205,23 @@ async def import_data_backup(update, context):
             raise ValueError("Invalid backup structure")
         candidate["settings"].setdefault("force_channel", None)
         candidate["settings"].setdefault("force_channel_url", None)
-        temp_path = DATA_FILE.with_suffix(".import.tmp")
-        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with temp_path.open("w", encoding="utf-8") as output:
-            json.dump(candidate, output, ensure_ascii=False, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temp_path, DATA_FILE)
+        candidate["settings"].setdefault("nexus_silenced_users", {})
         candidate.setdefault("bot_groups", {})
-        # احتفظ بنسخة كاملة من البيانات الحالية قبل استيراد أي ملف خارجي.
+        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # احتفظ بالملف الحالي قبل استبداله، وأوقف الاستيراد إذا تعذر إنشاء النسخة.
         if DATA_FILE.exists():
             import_backup = DATA_FILE.with_name(
                 f"{DATA_FILE.name}.pre-import-{time.time_ns()}.bak"
             )
             shutil.copy2(DATA_FILE, import_backup)
+
+        temp_path = DATA_FILE.with_suffix(".import.tmp")
+        with temp_path.open("w", encoding="utf-8") as output:
+            json.dump(candidate, output, ensure_ascii=False, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp_path, DATA_FILE)
         data = candidate
         rebuild_message_history()
         await message.reply_text(
