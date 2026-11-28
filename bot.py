@@ -2828,10 +2828,10 @@ def download_youtube_cc_mp3(query, output_dir):
         "skip_download": True,
         "extract_flat": "in_playlist",
         "noplaylist": True,
-        "socket_timeout": 20,
+        "socket_timeout": 8,
     }
     with YoutubeDL(search_options) as ydl:
-        search = ydl.extract_info(f"ytsearch5:{query}", download=False)
+        search = ydl.extract_info(f"ytsearch2:{query}", download=False)
 
     candidates = (search or {}).get("entries") or []
     for candidate in candidates:
@@ -2946,24 +2946,46 @@ def download_wikimedia_audio(query, output_dir):
 
 def download_permitted_youtube_mp3(query, output_dir):
     """
-    Multi-source search: YouTube (Creative Commons only), Internet Archive,
-    then Wikimedia Commons. A failure in one provider never blocks the others.
+    Try ten YouTube search strategies in sequence. Every attempt searches
+    YouTube through yt-dlp; audio is downloaded only when the video is
+    explicitly marked Creative Commons. No third-party audio repositories
+    are used. A failed search/inspection/download advances to the next route.
     """
-    providers = (
-        ("YouTube", lambda: download_youtube_cc_mp3(query, output_dir)),
-        ("Internet Archive", lambda: download_archive_audio(query, output_dir)),
-        ("Wikimedia Commons", lambda: download_wikimedia_audio(query, output_dir)),
+    clean_query = re.sub(r"\\s+", " ", (query or "")).strip()
+    if not clean_query:
+        return None
+
+    search_routes = (
+        ("بحث عام", clean_query),
+        ("مطابقة العبارة", f'"{clean_query}"'),
+        ("الصوت الرسمي", f"{clean_query} official audio"),
+        ("الفيديو الرسمي", f"{clean_query} official music video"),
+        ("كلمات الأغنية", f"{clean_query} lyrics"),
+        ("بحث صوتي", f"{clean_query} audio"),
+        ("الأغنية كاملة", f"{clean_query} full song"),
+        ("قناة الفنان", f"{clean_query} topic"),
+        ("بحث الأغنية", f"{clean_query} song"),
+        ("بحث موسيقي", f"{clean_query} music"),
     )
-    for provider_name, provider in providers:
+
+    attempted_queries = set()
+    for route_name, route_query in search_routes:
+        normalized = route_query.casefold()
+        if normalized in attempted_queries:
+            continue
+        attempted_queries.add(normalized)
         try:
-            result = provider()
+            result = download_youtube_cc_mp3(route_query, output_dir)
             if result:
-                result.setdefault("source", provider_name)
+                result["source"] = "YouTube"
+                result["search_route"] = route_name
                 return result
         except Exception:
-            logger.exception("%s audio provider failed; trying next source", provider_name)
+            logger.exception(
+                "YouTube search route '%s' failed; trying the next route",
+                route_name,
+            )
     return None
-
 
 
 
