@@ -3364,11 +3364,25 @@ async def scheduled_group_worker(application):
 
 
 async def start_background_tasks(application):
-    # اربط المهمة بعمر Application حتى تُدار وتُغلق بصورة سليمة عند إيقاف البوت.
-    application.create_task(
+    # post_init يعمل قبل Application.start؛ أنشئ المهمة ثم أوقفها صراحةً في post_stop.
+    application.bot_data["paradox_scheduled_worker_task"] = asyncio.create_task(
         scheduled_group_worker(application),
         name="paradox-scheduled-group-worker",
     )
+
+
+async def stop_background_tasks(application):
+    task = application.bot_data.pop("paradox_scheduled_worker_task", None)
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Scheduled background worker stopped with an error")
 
 
 # =========================================================
@@ -4980,7 +4994,13 @@ def main():
         )
 
     log_data_storage_location()
-    app = Application.builder().token(BOT_TOKEN).post_init(start_background_tasks).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(start_background_tasks)
+        .post_stop(stop_background_tasks)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(game_callback, pattern=r"^game:"))

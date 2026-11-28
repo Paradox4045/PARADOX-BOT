@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -84,6 +85,26 @@ class DataSafetyTests(unittest.TestCase):
 
         self.assertNotIn("not-a-chat-id", bot.group_message_history)
         self.assertEqual(list(bot.group_message_history[-1003]), [{"id": 7, "date": 123}])
+
+
+
+class BackgroundTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scheduled_worker_is_cancelled_during_post_stop(self):
+        application = type("FakeApplication", (), {"bot_data": {}})()
+        started = asyncio.Event()
+
+        async def waiting_worker(_application):
+            started.set()
+            await asyncio.Event().wait()
+
+        with patch.object(bot, "scheduled_group_worker", waiting_worker):
+            await bot.start_background_tasks(application)
+            task = application.bot_data["paradox_scheduled_worker_task"]
+            await started.wait()
+            await bot.stop_background_tasks(application)
+
+        self.assertTrue(task.cancelled())
+        self.assertNotIn("paradox_scheduled_worker_task", application.bot_data)
 
 
 if __name__ == "__main__":
