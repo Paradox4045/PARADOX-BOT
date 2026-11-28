@@ -93,8 +93,8 @@ ROLE_COMMANDS = {
     "deputy": [
         ("حظر", "حظر عضو", "ban"), ("فك_الحظر", "فك الحظر", "ban"),
         ("كتم", "كتم عضو", "mute"), ("فك_الكتم", "فك الكتم", "unmute"),
-        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "assign_roles"),
-        ("عزل_مشرف", "عزل مشرف عند التفويض", "assign_roles"),
+        ("طرد", "طرد عضو", "ban"), ("رفع_مشرف", "تعيين مشرف عند التفويض", "manage_roles"),
+        ("عزل_مشرف", "عزل مشرف عند التفويض", "manage_roles"),
         ("الإنذارات", "مراجعة إنذارات الأعضاء", "warnings"),
         ("إزالة_إنذار", "حذف إنذار", "warnings"),
         ("تنظيف", "حذف الرسائل المخالفة", "delete"),
@@ -149,6 +149,7 @@ PERMISSIONS = {
     "delete": "حذف الرسائل والتنظيف",
     "pin": "تثبيت الرسائل",
     "stats": "الإحصائيات والقوائم",
+    "logs": "سجل الإدارة",
     "admins": "إدارة المشرفين",
 }
 
@@ -465,7 +466,7 @@ def chat_data(chat_id):
     info.setdefault("reports", [])
     info.setdefault("scheduled_messages", [])
     info.setdefault("rules_text", "")
-    info.setdefault("welcome_text", "أهلاً وسهلاً {name} 🌟\\nنورت PARADOX 404!")
+    info.setdefault("welcome_text", "أهلاً وسهلاً {name} 🌟\nنورت PARADOX 404!")
     info.setdefault("protection_report_enabled", False)
     info.setdefault("next_protection_report_at", 0)
     return info
@@ -944,12 +945,14 @@ def role_menu_keyboard(chat_id):
     ])
 
 
-def management_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛡️ الحماية التلقائية", callback_data=f"ap:{chat_id}")],
-        [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"al:{chat_id}")],
-        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
-    ])
+def management_keyboard(chat_id, include_logs=True):
+    rows = [
+        [InlineKeyboardButton("🛡️ الحماية التلقائية", callback_data=f"ap:{chat_id}")]
+    ]
+    if include_logs:
+        rows.append([InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"al:{chat_id}")])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def role_detail_keyboard(chat_id, role):
@@ -1201,8 +1204,8 @@ async def render_group_stats(chat_id, context):
     )
 
 
-def statistics_keyboard(chat_id):
-    return InlineKeyboardMarkup([
+def statistics_keyboard(chat_id, include_logs=True):
+    rows = [
         [InlineKeyboardButton("📊 الملخص العام", callback_data=f"sx:{chat_id}:overview")],
         [InlineKeyboardButton("💬 الرسائل والتفاعل", callback_data=f"sx:{chat_id}:activity")],
         [InlineKeyboardButton("🛡️ المشرفون والرتب", callback_data=f"sx:{chat_id}:admins")],
@@ -1210,9 +1213,11 @@ def statistics_keyboard(chat_id):
         [InlineKeyboardButton("🔇 المكتومون", callback_data=f"sx:{chat_id}:muted"),
          InlineKeyboardButton("🚫 المحظورون", callback_data=f"sx:{chat_id}:banned")],
         [InlineKeyboardButton("⛔ المقيّدون", callback_data=f"sx:{chat_id}:restricted")],
-        [InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"sx:{chat_id}:logs")],
-        [InlineKeyboardButton("⬅️ رجوع", callback_data="home")],
-    ])
+    ]
+    if include_logs:
+        rows.append([InlineKeyboardButton("📋 سجل الإدارة", callback_data=f"sx:{chat_id}:logs")])
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def render_statistics_section(chat_id, section, context):
@@ -1303,6 +1308,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     action = query.data or ""
+
+    # لا تسمح للأزرار الداخلية بتجاوز بوابة الاشتراك الإجباري في الخاص.
+    if (
+        query.message
+        and query.message.chat.type == ChatType.PRIVATE
+        and not is_bot_owner(user.id)
+        and action != "check_subscription"
+        and not await force_subscription_ok(user.id, context)
+    ):
+        await query.answer("اشترك بالقناة أولاً.", show_alert=True)
+        return
 
     if action.startswith("bg:"):
         if not is_bot_owner(user.id):
@@ -1401,7 +1417,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
             await query.answer()
             await query.edit_message_text(
-                "💾 النسخ الاحتياطي والاستعادة\\n\\nاختار المجموعة التي تريد إدارة نسخها الاحتياطية:",
+                "💾 النسخ الاحتياطي والاستعادة\n\nاختار المجموعة التي تريد إدارة نسخها الاحتياطية:",
                 reply_markup=InlineKeyboardMarkup(rows),
             )
         else:
@@ -1411,8 +1427,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await query.answer()
             await query.edit_message_text(
-                "💾 النسخ الاحتياطي والاستعادة\\n\\n"
-                "كل نسخة تخص هذه المجموعة وحدها، واستعادة النسخة لا تؤثر على بقية المجموعات.\\n"
+                "💾 النسخ الاحتياطي والاستعادة\n\n"
+                "كل نسخة تخص هذه المجموعة وحدها، واستعادة النسخة لا تؤثر على بقية المجموعات.\n"
                 "النسخ التلقائي ينشئ نسخة كل 24 ساعة.",
                 reply_markup=backup_menu_keyboard(chat_id),
             )
@@ -1433,7 +1449,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if operation == "menu":
             await query.answer()
             await query.edit_message_text(
-                "💾 النسخ الاحتياطي والاستعادة\\n\\n"
+                "💾 النسخ الاحتياطي والاستعادة\n\n"
                 "اختار العملية. هذه النسخ تخص المجموعة المحددة فقط.",
                 reply_markup=backup_menu_keyboard(chat_id),
             )
@@ -1448,7 +1464,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log_action(chat_id, user, "إنشاء نسخة احتياطية يدوية")
                 await query.answer("تم إنشاء النسخة الاحتياطية ✅", show_alert=True)
                 await query.edit_message_text(
-                    f"✅ تم إنشاء نسخة احتياطية للمجموعة.\\nعدد النسخ المحفوظة: {len(list_group_backups(chat_id))}",
+                    f"✅ تم إنشاء نسخة احتياطية للمجموعة.\nعدد النسخ المحفوظة: {len(list_group_backups(chat_id))}",
                     reply_markup=backup_menu_keyboard(chat_id),
                 )
             except Exception:
@@ -1468,7 +1484,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data=f"bk:menu:{chat_id}")])
             await query.answer()
             await query.edit_message_text(
-                "🗂️ النسخ الاحتياطية السابقة\\n\\n"
+                "🗂️ النسخ الاحتياطية السابقة\n\n"
                 + ("اختار نسخة لاستعادتها أو حذفها:" if backups else "ماكو نسخ محفوظة لهذه المجموعة بعد."),
                 reply_markup=InlineKeyboardMarkup(rows),
             )
@@ -1496,7 +1512,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log_action(chat_id, user, "حذف نسخة احتياطية")
                     await query.answer("تم حذف النسخة.")
                     await query.edit_message_text(
-                        "🗂️ النسخ الاحتياطية السابقة\\n\\nتم حذف النسخة المحددة.",
+                        "🗂️ النسخ الاحتياطية السابقة\n\nتم حذف النسخة المحددة.",
                         reply_markup=InlineKeyboardMarkup([[
                             InlineKeyboardButton("⬅️ رجوع", callback_data=f"bk:list:{chat_id}")
                         ]]),
@@ -1517,7 +1533,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_action(chat_id, user, f"النسخ الاحتياطي التلقائي: {state}")
             await query.answer(f"النسخ التلقائي {state}.")
             await query.edit_message_text(
-                f"💾 النسخ الاحتياطي والاستعادة\\n\\nالنسخ التلقائي: {state}\\n"
+                f"💾 النسخ الاحتياطي والاستعادة\n\nالنسخ التلقائي: {state}\n"
                 "عند تفعيله، تُنشأ نسخة جديدة كل 24 ساعة.",
                 reply_markup=backup_menu_keyboard(chat_id),
             )
@@ -1572,7 +1588,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         await query.edit_message_text(
             "📊 الإحصائيات\nاختار القسم اللي تريد تعرضه:",
-            reply_markup=statistics_keyboard(chat_id),
+            reply_markup=statistics_keyboard(
+                chat_id, await has_permission(chat_id, user.id, "logs", context)
+            ),
         )
         return
 
@@ -1585,6 +1603,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if not await has_permission(chat_id, user.id, "stats", context):
             await query.answer("ما عندك صلاحية عرض هذا القسم.", show_alert=True)
+            return
+        if section == "logs" and not await has_permission(chat_id, user.id, "logs", context):
+            await query.answer("ما عندك صلاحية عرض سجل الإدارة.", show_alert=True)
             return
         await query.answer()
         body = await render_statistics_section(chat_id, section, context)
@@ -1600,6 +1621,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message and query.message.chat.type == ChatType.PRIVATE:
             rows = []
             for saved_chat_id, saved_info in data.get("chats", {}).items():
+                try:
+                    group_id = int(saved_chat_id)
+                    if not await can_manage_panel(group_id, user.id, context):
+                        continue
+                except (ValueError, TypeError):
+                    continue
                 title = (saved_info.get("title") or saved_chat_id)[:45]
                 rows.append([InlineKeyboardButton(
                     f"👥 {title}", callback_data=f"rm:{saved_chat_id}"
@@ -1607,7 +1634,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
             await query.answer()
             await query.edit_message_text(
-                "👑 نظام الرتب\n\nاختار المجموعة لإدارة رتبها:",
+                "👑 نظام الرتب\n\n" + ("اختار المجموعة لإدارة رتبها:" if len(rows) > 1 else "ما عندك مجموعة تملك صلاحية إدارة رتبها."),
                 reply_markup=InlineKeyboardMarkup(rows),
             )
         else:
@@ -1650,7 +1677,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         await query.edit_message_text(
             "🛡️ الإدارة والحماية\nاختار قسم الإدارة والحماية:",
-            reply_markup=management_keyboard(chat_id),
+            reply_markup=management_keyboard(
+                chat_id, await has_permission(chat_id, user.id, "logs", context)
+            ),
         )
         return
 
@@ -1941,18 +1970,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if (
-        query.message
-        and query.message.chat.type == ChatType.PRIVATE
-        and not is_bot_owner(user.id)
-        and not await force_subscription_ok(user.id, context)
-    ):
-        await query.answer("اشترك بالقناة أولاً.", show_alert=True)
-        return
-
     await query.answer()
 
-    if action == "home":
+    if action in ("home", "back_main"):
         await query.edit_message_text(
             "🔥 PARADOX 404\n\nاختار القسم:",
             reply_markup=main_menu(user.id),
@@ -1962,13 +1982,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message and query.message.chat.type == ChatType.PRIVATE:
             rows = []
             for saved_chat_id, saved_info in data.get("chats", {}).items():
+                try:
+                    group_id = int(saved_chat_id)
+                    if not await can_manage_panel(group_id, user.id, context):
+                        continue
+                except (ValueError, TypeError):
+                    continue
                 title = (saved_info.get("title") or saved_chat_id)[:45]
                 rows.append([InlineKeyboardButton(
                     f"👥 {title}", callback_data=f"mg:{saved_chat_id}"
                 )])
             rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
             await query.edit_message_text(
-                "🛡️ الإدارة والحماية\n\nاختار المجموعة اللي تريد تديرها:",
+                "🛡️ الإدارة والحماية\n\n" + ("اختار المجموعة اللي تريد تديرها:" if len(rows) > 1 else "ما عندك مجموعة تملك صلاحية إدارتها."),
                 reply_markup=InlineKeyboardMarkup(rows),
             )
         else:
@@ -1978,20 +2004,28 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await query.edit_message_text(
                 "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
-                reply_markup=management_keyboard(chat_id),
+                reply_markup=management_keyboard(
+                    chat_id, await has_permission(chat_id, user.id, "logs", context)
+                ),
             )
 
     elif action == "statistics":
         if query.message and query.message.chat.type == ChatType.PRIVATE:
             rows = []
             for saved_chat_id, saved_info in data.get("chats", {}).items():
+                try:
+                    group_id = int(saved_chat_id)
+                    if not await has_permission(group_id, user.id, "stats", context):
+                        continue
+                except (ValueError, TypeError):
+                    continue
                 title = (saved_info.get("title") or saved_chat_id)[:45]
                 rows.append([InlineKeyboardButton(
                     f"👥 {title}", callback_data=f"sg:{saved_chat_id}"
                 )])
             rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="home")])
             await query.edit_message_text(
-                "📊 الإحصائيات\n\nاختار المجموعة لعرض إحصائياتها:",
+                "📊 الإحصائيات\n\n" + ("اختار المجموعة لعرض إحصائياتها:" if len(rows) > 1 else "ما عندك مجموعة تملك صلاحية عرض إحصائياتها."),
                 reply_markup=InlineKeyboardMarkup(rows),
             )
         else:
@@ -2001,7 +2035,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await query.edit_message_text(
                 "📊 الإحصائيات\nاختار القسم اللي تريد تعرضه:",
-                reply_markup=statistics_keyboard(chat_id),
+                reply_markup=statistics_keyboard(
+                    chat_id, await has_permission(chat_id, user.id, "logs", context)
+                ),
             )
 
     elif action == "ai_menu":
@@ -2612,7 +2648,7 @@ async def show_top_users(chat_id):
 
 async def show_logs(message, chat_id, actor, context):
     if not await require_permission(
-        message, chat_id, actor, "stats", context
+        message, chat_id, actor, "logs", context
     ):
         return
     logs = chat_data(chat_id)["logs"][-15:]
@@ -3389,6 +3425,23 @@ async def stop_background_tasks(application):
 # GROUP TEXT COMMANDS
 # =========================================================
 
+def parse_bulk_delete_count(text):
+    """يفهم أوامر حذف العدد بصيغ الأمر والصياغة الطبيعية."""
+    raw = (text or "").strip()
+    if raw.startswith("/"):
+        raw = raw[1:].strip()
+    normalized = re.sub(r"\s+", " ", normalize_message(raw)).strip()
+    patterns = (
+        r"(?:احذف|امسح)\s+(?:(?:اخر|آخر)\s+)?(\d+)\s+(?:رسائل|رسالة)",
+        r"(?:حذف|مسح|تنظيف)\s+(\d+)",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, normalized)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 async def handle_group_text_commands(update, context):
     message = update.effective_message
     chat = update.effective_chat
@@ -3406,7 +3459,9 @@ async def handle_group_text_commands(update, context):
         else:
             await message.reply_text(
                 "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
-                reply_markup=management_keyboard(chat.id),
+                reply_markup=management_keyboard(
+                    chat.id, await has_permission(chat.id, user.id, "logs", context)
+                ),
             )
         return True
 
@@ -3435,7 +3490,9 @@ async def handle_group_text_commands(update, context):
                     await message.reply_text("⛔ ما عندك صلاحية عرض الإحصائيات.")
             else:
                 if await can_manage_panel(chat.id, user.id, context):
-                    await message.reply_text("🛡️ الإدارة والحماية", reply_markup=management_keyboard(chat.id))
+                    await message.reply_text("🛡️ الإدارة والحماية", reply_markup=management_keyboard(
+                    chat.id, await has_permission(chat.id, user.id, "logs", context)
+                ))
                 else:
                     await message.reply_text("⛔ ما عندك صلاحية فتح لوحة الإدارة.")
             return True
@@ -3483,7 +3540,9 @@ async def handle_group_text_commands(update, context):
         else:
             await message.reply_text(
                 "🛡️ الإدارة والحماية\nاختار الرتبة أو قسم الحماية:",
-                reply_markup=management_keyboard(chat.id),
+                reply_markup=management_keyboard(
+                    chat.id, await has_permission(chat.id, user.id, "logs", context)
+                ),
             )
         return True
 
@@ -3654,29 +3713,58 @@ async def handle_group_text_commands(update, context):
     if await handle_extra_group_features(message, chat.id, user, key, context):
         return True
 
-    # صياغات طبيعية لحذف عدد من الرسائل.
-    natural_delete = re.fullmatch(
-        r"(?:احذف|امسح) (?:اخر )?(\\d+) (?:رسائل|رسالة)", smart_key
-    )
-    if natural_delete:
-        key = "حذف " + natural_delete.group(1)
-
-    delete_match = re.fullmatch(r"(?:حذف|تنظيف)\s+(\d+)", key)
-    if delete_match:
+    bulk_delete_count = parse_bulk_delete_count(text)
+    if bulk_delete_count is not None:
         await delete_recent_messages(
-            message,
-            chat.id,
-            user,
-            int(delete_match.group(1)),
-            context,
+            message, chat.id, user, bulk_delete_count, context
         )
         return True
+
 
     if key == "المتفاعلين":
         if await has_permission(chat.id, user.id, "stats", context):
             await message.reply_text(await show_top_users(chat.id))
         else:
             await message.reply_text("⛔ ما عندك صلاحية عرض الإحصائيات.")
+        return True
+
+    if key in ("المخالفون", "المخالفين"):
+        if not await require_permission(message, chat.id, user, "stats", context):
+            return True
+        info = chat_data(chat.id)
+        violators = {}
+        for uid, count in info.get("warnings", {}).items():
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                continue
+            if count > 0:
+                activity = info.get("activity", {}).get(uid, {})
+                violators[uid] = {
+                    "name": activity.get("name") or uid,
+                    "reasons": [f"{count} إنذار"],
+                }
+        for section, label in (
+            ("muted", "مكتوم"), ("banned", "محظور"), ("restricted", "مقيّد")
+        ):
+            for uid, record in info.get(section, {}).items():
+                item = violators.setdefault(uid, {
+                    "name": record.get("name", uid) if isinstance(record, dict) else uid,
+                    "reasons": [],
+                })
+                if isinstance(record, dict) and record.get("name"):
+                    item["name"] = record["name"]
+                item["reasons"].append(label)
+        if not violators:
+            body = "✅ ماكو أعضاء مخالفين مسجلين حالياً."
+        else:
+            lines = ["⚠️ الأعضاء المخالفون:"]
+            for uid, item in list(violators.items())[:50]:
+                lines.append(
+                    f"• {item['name']} — {', '.join(item['reasons'])} (ID: {uid})"
+                )
+            body = "\n".join(lines)
+        await message.reply_text(body)
         return True
 
     if key in ("المشرفون", "المشرفين"):
@@ -3772,7 +3860,7 @@ async def handle_group_text_commands(update, context):
             await message.reply_text(f"⚠️ إنذارات {target.full_name}: {count}/{int(chat_data(chat.id).get('warning_limit', WARN_LIMIT))}")
         else:
             rows = [f"• {uid}: {count}" for uid, count in warnings.items() if int(count) > 0]
-            await message.reply_text("⚠️ سجل الإنذارات\\n\\n" + ("\\n".join(rows[:50]) if rows else "ماكو إنذارات مسجلة."))
+            await message.reply_text("⚠️ سجل الإنذارات\n\n" + ("\n".join(rows[:50]) if rows else "ماكو إنذارات مسجلة."))
         return True
 
     if key in ("إزالة إنذار", "ازالة انذار"):
@@ -3831,10 +3919,10 @@ async def handle_group_text_commands(update, context):
 
     if key == "مساعدة":
         await message.reply_text(
-            "📋 أوامر PARADOX 404\\n"
-            "كتم، فك الكتم، حظر، فك الحظر، طرد، إنذار، إزالة إنذار\\n"
-            "حذف، حذف 20، تثبيت، إلغاء التثبيت، معلومات عضو\\n"
-            "الإدارة والحماية، الإنذارات، سجل الإدارة، مراقبة\\n"
+            "📋 أوامر PARADOX 404\n"
+            "كتم، فك الكتم، حظر، فك الحظر، طرد، إنذار، إزالة إنذار\n"
+            "حذف، حذف 20، تثبيت، إلغاء التثبيت، معلومات عضو\n"
+            "الإدارة والحماية، الإنذارات، سجل الإدارة، مراقبة\n"
             "للأغاني: يوت ثم اسم الأغنية."
         )
         return True
@@ -3895,6 +3983,8 @@ async def handle_group_text_commands(update, context):
             return True
 
     actions = {
+        "مسح": "delete",
+        "تنظيف": "delete",
         "كتم": "mute",
         "إلغاء الكتم": "unmute",
         "فك الكتم": "unmute",
@@ -4280,7 +4370,7 @@ async def welcome_new_members(update, context):
             if chat_data(chat.id).get("bot_join_monitor", True):
                 log_action(chat.id, None, "دخول حساب بوت جديد", member)
                 await message.reply_text(
-                    f"🤖 دخل حساب بوت جديد: {member.full_name}\\n"
+                    f"🤖 دخل حساب بوت جديد: {member.full_name}\n"
                     "تم تسجيل دخوله في سجل المراقبة."
                 )
             continue
@@ -4641,13 +4731,13 @@ async def start_game(chat_id, message, game):
             title = "➗ رياضيات"
             question = item["q"]
         state = {"type": "text_answer", "answer": answer, "question": question}
-        prompt = f"{title}\\n{question}\\n\\nاكتبوا الجواب برسالة هنا. أول إجابة صحيحة تربح 3 نقاط ⭐"
+        prompt = f"{title}\n{question}\n\nاكتبوا الجواب برسالة هنا. أول إجابة صحيحة تربح 3 نقاط ⭐"
     elif game == "number":
         number = random.randint(1, 20)
         state = {"type": "number", "answer": str(number), "question": "خمن الرقم"}
         prompt = (
-            "🔢 **خمن الرقم**\\n"
-            "اخترت رقماً من 1 إلى 20.\\n"
+            "🔢 **خمن الرقم**\n"
+            "اخترت رقماً من 1 إلى 20.\n"
             "أول عضو يخمنه بشكل صحيح يربح 3 نقاط ⭐"
         )
     elif game == "quiz":
@@ -4711,7 +4801,7 @@ async def handle_game_text(message, chat_id, user, text, context):
     info = chat_data(chat_id)
     normalized = normalize_game_text(text)
     if normalized == "الالعاب":
-        await message.reply_text("🎮 ألعاب نيكسوس\\nاختاروا اللعبة أو اكتبوا أمرها مباشرة داخل المجموعة.", reply_markup=games_keyboard())
+        await message.reply_text("🎮 ألعاب نيكسوس\nاختاروا اللعبة أو اكتبوا أمرها مباشرة داخل المجموعة.", reply_markup=games_keyboard())
         return True
     game_commands = {
         "كت": "kit", "حزورة": "riddle", "لغز": "puzzle",
