@@ -2931,6 +2931,18 @@ def download_permitted_youtube_mp3(query, output_dir):
 
 
 
+def cleanup_audio_workdir(task, work_dir):
+    """لا تحذف مجلد التنزيل قبل انتهاء خيط yt-dlp حتى بعد انتهاء مهلة الانتظار."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.debug("Timed-out audio worker finished with an error", exc_info=True)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 async def search_song(message, chat_id, query):
     query = (query or "").strip()
     if not query:
@@ -2941,9 +2953,14 @@ async def search_song(message, chat_id, query):
         f"🔎 نيكسوس يبحث بالأكثر من مصدر: {query}"
     )
     work_dir = tempfile.mkdtemp(prefix="nexus_audio_")
+    worker_task = None
+    cleanup_deferred = False
     try:
+        worker_task = asyncio.create_task(
+            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir)
+        )
         result = await asyncio.wait_for(
-            asyncio.to_thread(download_permitted_youtube_mp3, query, work_dir),
+            asyncio.shield(worker_task),
             timeout=180,
         )
         if not result:
@@ -2969,16 +2986,29 @@ async def search_song(message, chat_id, query):
         await status_message.delete()
 
     except asyncio.TimeoutError:
+        if worker_task is not None and not worker_task.done():
+            worker_task.add_done_callback(
+                lambda completed: cleanup_audio_workdir(completed, work_dir)
+            )
+            cleanup_deferred = True
         await status_message.edit_text(
             "⏳ التحميل أخذ وقت أطول من اللازم. جرّب مرة ثانية."
         )
+    except asyncio.CancelledError:
+        if worker_task is not None and not worker_task.done():
+            worker_task.add_done_callback(
+                lambda completed: cleanup_audio_workdir(completed, work_dir)
+            )
+            cleanup_deferred = True
+        raise
     except Exception:
         logger.exception("Permitted YouTube audio download failed")
         await status_message.edit_text(
             "⚠️ تعذر تجهيز ملف MP3 حالياً. حاول مرة ثانية بعد قليل."
         )
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if not cleanup_deferred:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # =========================================================
