@@ -4314,7 +4314,6 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
         },
         "contents": contents,
         "generationConfig": {
-            "temperature": 0.7,
             "maxOutputTokens": 220,
         },
     }
@@ -4349,6 +4348,16 @@ async def nexus_ai_reply(message, chat_id, user, text, context):
                     )
                     time.sleep(delay)
                     continue
+                if not response.ok:
+                    try:
+                        error_data = response.json().get("error", {})
+                        error_message = error_data.get("message", "Unknown Gemini API error")
+                    except (ValueError, AttributeError):
+                        error_message = "Gemini returned a non-JSON error response"
+                    logger.error(
+                        "Gemini API rejected request (HTTP %s): %s",
+                        response.status_code, str(error_message)[:1200],
+                    )
                 response.raise_for_status()
                 return response.json()
             except requests.RequestException as error:
